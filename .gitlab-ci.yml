@@ -6,7 +6,7 @@ variables:
 
 build:
   stage: build
-  tags: [deployment]
+  tags: [master]
   image: docker:24.0.9-cli
   services:
     - name: docker:24.0.9-dind
@@ -23,7 +23,7 @@ build:
 
 deploy:
   stage: deploy
-  tags: [deployment]
+  tags: [master]
   image: harbor.fido.uz/devops-images/fido-ssh:test
   needs: [build]
   before_script:

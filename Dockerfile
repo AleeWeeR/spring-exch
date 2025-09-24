@@ -1,29 +1,20 @@
-# Stage 1: Build the application using Maven on Alpine with JDK 21
-FROM maven:3.9-eclipse-temurin-21-alpine AS build
-
+FROM eclipse-temurin:21-jdk AS build
 WORKDIR /app
-COPY . .
 
-# Optional: Skip tests to speed up the build
-RUN mvn clean package -DskipTests
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+RUN chmod +x mvnw && ./mvnw -B -DskipTests dependency:go-offline
 
-# Stage 2: Runtime image using Eclipse Temurin JRE 21 (compact & secure)
-FROM eclipse-temurin:21-jre-alpine AS runtime
+COPY src/ src/
+RUN ./mvnw -B -DskipTests package
 
-# Set Timezone
-ENV TZ=Asia/Tashkent
+RUN cp target/pf-exchange*.jar /app/app.jar
 
-# App directory and user
+FROM eclipse-temurin:21-jre
 WORKDIR /app
-ARG APPLICATION_USER=appuser
 
-RUN adduser --no-create-home -u 1000 -D $APPLICATION_USER && \
-    chown -R $APPLICATION_USER /app
+COPY --from=build /app/app.jar /app/app.jar
 
-USER 1000
+EXPOSE 8080
 
-# Copy the jar file from the build stage
-COPY --chown=1000:1000 --from=build /app/target/pf-exchange.jar /app/app.jar
-
-# Run the jar file with Spring profile
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["sh", "-c", "java -jar /app/app.jar"]

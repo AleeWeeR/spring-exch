@@ -1,0 +1,45 @@
+stages: [build, deploy]
+variables:
+  DOCKER_BUILDKIT: "1"
+  IMAGE: "$HARBOR_HOST/$HARBOR_PROJECT/$IMAGE_NAME"
+
+
+build:
+  stage: build
+  tags: [devstage]
+  image: docker:24.0.9-cli
+  services:
+    - name: docker:24.0.9-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - set -euo pipefail
+    - echo "$HARBOR_PASSWORD" | docker login -u "$HARBOR_USERNAME" --password-stdin "$HARBOR_HOST"
+  script:
+    - docker build -t "$IMAGE:latest" .
+    - docker push "$IMAGE:latest"
+
+deploy:
+  stage: deploy
+  tags: [devstage]
+  image: harbor.fido.uz/devops-images/fido-ssh:latest
+  needs: [build]
+  before_script:
+    - eval $(ssh-agent -s)
+    - ssh-add <(echo "$SSH_PRIVATE_KEY")
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - 'echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config'
+    - ssh -T $DEPLOY_USER@DEPLOY_HOST || true
+  script:
+    ssh $DEPLOY_USER@DEPLOY_HOST bash -s <<EOF
+    set -euo pipefail
+    echo "$HARBOR_PASSWORD" | docker login -u "$HARBOR_USERNAME" --password-stdin "$HARBOR_HOST"
+    docker rm -f pf_exchange || true
+    docker pull "$IMAGE:latest"
+    docker run -d --name pf_exchange -p 8080:8080 --restart=unless-stopped "$IMAGE:latest"
+    docker logout "$HARBOR_HOST" || true
+    EOF
+  

@@ -24,7 +24,7 @@ build:
 deploy:
   stage: deploy
   tags: [devstage]
-  image: harbor.fido.uz/devops-images/fido-ssh:latest
+  image: harbor.fido.uz/devops-images/fido-ssh:test
   needs: [build]
   before_script:
     - eval $(ssh-agent -s)

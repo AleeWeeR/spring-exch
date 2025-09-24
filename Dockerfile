@@ -3,7 +3,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN mvn package -B -DskipTests
+RUN mvn clean package -B -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app

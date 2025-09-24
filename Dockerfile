@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jdk AS build
+FROM eclipse-temurin:21-jdk-alpine AS build
 WORKDIR /app
 
 COPY .mvn/ .mvn/
@@ -10,7 +10,7 @@ RUN ./mvnw -B -DskipTests package
 
 RUN cp target/pf-exchange*.jar /app/app.jar
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
 COPY --from=build /app/app.jar /app/app.jar

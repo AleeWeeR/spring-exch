@@ -1,7 +1,7 @@
 stages: [build, deploy]
 variables:
   DOCKER_BUILDKIT: "1"
-  IMAGE: "$HARBOR_HOST/$HARBOR_PROJECT/$IMAGE_NAME"
+  IMAGE: "$HARBOR_HOST/$HARBOR_PROJECT/$CI_PROJECT_NAME"
 
 
 build:

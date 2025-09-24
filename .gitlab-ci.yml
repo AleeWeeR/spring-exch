@@ -1,5 +1,5 @@
 workflow:
-  - rules:
+  rules:
     - if: $CI_COMMIT_BRANCH == master
       when: always
 

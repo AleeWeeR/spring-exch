@@ -1,20 +1,13 @@
 FROM eclipse-temurin:21-jdk-alpine AS build
 WORKDIR /app
 
-COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
-RUN chmod +x mvnw && ./mvnw -B -DskipTests dependency:go-offline
+COPY . .
 
-COPY src/ src/
-RUN ./mvnw -B -DskipTests package
-
-RUN cp target/pf-exchange*.jar /app/app.jar
+RUN mvn package -B -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-COPY --from=build /app/app.jar /app/app.jar
-
-EXPOSE 8080
+COPY --from=build /app/target/*.jar /app/app.jar
 
 ENTRYPOINT ["sh", "-c", "java -jar /app/app.jar"]

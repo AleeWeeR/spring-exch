@@ -1,3 +1,8 @@
+workflow:
+  - rules:
+    - if: $CI_COMMIT_BRANCH == master:
+      when: always
+
 stages: [build, deploy]
 variables:
   APP_PORT: 8080

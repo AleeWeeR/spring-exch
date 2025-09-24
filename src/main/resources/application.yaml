@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: pf-exchange
+  main:
+    banner-mode: off
+  output:
+    ansi:
+      enabled: always
+  datasource:
+    url: jdbc:oracle:thin:@10.50.50.144:1525:pfntest
+    username: core
+    password: coretest
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 30
+      pool-name: pf-exchange_pool
+      auto-commit: false
+      connectionTimeout: 45000
+      idleTimeout: 600000
+      maxLifetime: 1200000
+      data-source-properties:
+        "[v$session.program]": PF-EXCHANGE
+        cachePrepStmts: true
+        prepStmtCacheSize: 100
+        prepStmtCacheSqlLimit: 1024
+      leak-detection-threshold: 1000
+  servlet:
+    multipart:
+      max-file-size: 2000MB
+      max-request-size: 2000MB
+      enabled: true
+  jackson:
+    serialization:
+      indent_output: true
+  jpa:
+    hibernate:
+      ddl-auto: none
+# Server
+server:
+  port: 8080
+  compression:
+    enabled: true
+    min-response-size: 32
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        max-age: 24h
+
+# Logging
+logging:
+  level:
+    root: error
+    org.springframework:
+      web: error
+    io: info
+    uz.fido.pf-exchange: debug # ????? ??????????? ???????
+
+jwt:
+  secretKey: 5A7134743777397A24432646294A404635266556A5863272357538782F4125
+  expireHours: 24

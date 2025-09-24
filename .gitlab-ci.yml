@@ -32,7 +32,7 @@ deploy:
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
     - 'echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config'
-    - ssh -T $DEPLOY_USER@DEPLOY_HOST || true
+    - ssh -T $DEPLOY_USER@$DEPLOY_HOST || true
   script:
     ssh $DEPLOY_USER@DEPLOY_HOST bash -s <<EOF
     set -euo pipefail

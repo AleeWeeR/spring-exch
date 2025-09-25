@@ -7,9 +7,9 @@ spring:
     ansi:
       enabled: always
   datasource:
-    url: jdbc:oracle:thin:@10.50.50.144:1525:pfntest
-    username: core
-    password: coretest
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: oracle.jdbc.OracleDriver
     hikari:
       minimum-idle: 10

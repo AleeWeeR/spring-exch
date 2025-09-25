@@ -37,7 +37,7 @@ public class AuthController {
     public ResponseEntity<?> register(@RequestBody RegisterDto register) {
         authService.register(register);
         _logger.info("Register success. user -> %s".formatted(register));
-        return ResponseEntity.ok("Danniy uspeshniy soxrann");
+        return ResponseEntity.ok("Ma'lumot saqlandi!");
     }
 
 }

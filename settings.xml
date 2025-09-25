@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+      <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+        <mirrors>
+          <mirror>
+            <id>reposilite-repository-Maven-Mirror</id>
+            <name>Reposilite Repository</name>
+            <url>http://10.50.50.168:8200/Maven-Mirror</url>
+            <mirrorOf>external:*,!reposilite-repository-releases</mirrorOf>
+          </mirror>
+          <mirror>
+               <id>maven-default-http-blocker</id>
+               <mirrorOf>dummy</mirrorOf>
+               <name>Dummy mirror to override default blocking mirror that blocks http</name>
+               <url>http://0.0.0.0/</url>
+         </mirror>
+        </mirrors>
+      </settings>

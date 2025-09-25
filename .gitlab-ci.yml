@@ -36,9 +36,9 @@ deploy:
       ssh $DEPLOY_USER@$DEPLOY_HOST bash -s <<EOF
       set -e
       echo "$HARBOR_PASSWORD" | docker login -u "$HARBOR_USERNAME" --password-stdin "$HARBOR_HOST"
-      docker rm -f $IMAGE || true
+      docker rm -f $CI_PROJECT_NAME-$CI_COMMIT_BRANCH || true
       docker pull $IMAGE
-      docker run -d --name pf_exchange -e DB_URL=jdbc:oracle:thin:@10.50.50.144:1525:pfntest -e DB_USERNAME=core -e DB_PASSWORD=coretest -p $DEPLOY_PORT:$APP_PORT --restart=unless-stopped "$IMAGE"
+      docker run -d --name $CI_PROJECT_NAME-$CI_COMMIT_BRANCH -e DB_URL=jdbc:oracle:thin:@10.50.50.144:1525:pfntest -e DB_USERNAME=core -e DB_PASSWORD=coretest -p $DEPLOY_PORT:$APP_PORT --restart=unless-stopped "$IMAGE"
       docker logout "$HARBOR_HOST" || true
       EOF
   

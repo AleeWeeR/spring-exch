@@ -1,0 +1,44 @@
+workflow:
+  rules:
+    - if: "$CI_COMMIT_BRANCH == 'master'"
+      when: always
+
+stages: [build, deploy]
+variables:
+  APP_PORT: 8080
+  DEPLOY_PORT: 8080
+  IMAGE: "$HARBOR_HOST/$HARBOR_PROJECT/$CI_PROJECT_NAME-$CI_COMMIT_BRANCH:latest"
+
+
+build:
+  stage: build
+  tags: [stanley]
+  image: docker:latest
+  script:
+    - docker build -t $IMAGE .
+    - docker login -u $HARBOR_USERNAME -p $HARBOR_PASSWORD $HARBOR_HOST
+    - docker push $IMAGE
+
+deploy:
+  stage: deploy
+  tags: [stanley]
+  image: harbor.fido.uz/devops-images/fido-ssh:test
+  needs: [build]
+  before_script:
+    - eval $(ssh-agent -s)
+    - ssh-add <(echo "$SSH_PRIVATE_KEY")
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - 'echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config'
+    - ssh -T $DEPLOY_USER@$DEPLOY_HOST || true
+  script:
+    - | 
+      ssh $DEPLOY_USER@$DEPLOY_HOST bash -s <<EOF
+      set -e
+      echo "$HARBOR_PASSWORD" | docker login -u "$HARBOR_USERNAME" --password-stdin "$HARBOR_HOST"
+      docker rm -f $IMAGE || true
+      docker pull $IMAGE
+      docker run -d --name pf_exchange -p $DEPLOY_PORT:$APP_PORT --restart=unless-stopped "$IMAGE"
+      docker logout "$HARBOR_HOST" || true
+      EOF
+  

@@ -1,29 +1,17 @@
-# Stage 1: Build the application using Maven on Alpine with JDK 21
-FROM maven:3.9-eclipse-temurin-21-alpine AS build
+FROM harbor.fido.uz/devops-images/maven:3.9-amazoncorretto-21-alpine AS build
 
 WORKDIR /app
 COPY . .
 
-# Optional: Skip tests to speed up the build
-RUN mvn clean package -DskipTests
+RUN echo "Checking if Reposilite server is up..." && if curl --output /dev/null --silent --head --fail http://10.50.50.168:8200; then echo "Reposilite server is up. Using settings_reposilite.xml." && mkdir -p /root/.m2 && cp settings.xml /root/.m2/; else echo "Reposilite server is down. Using default settings.xml."; fi
+RUN mvn clean package -B -e -DskipTests
 
-# Stage 2: Runtime image using Eclipse Temurin JRE 21 (compact & secure)
-FROM eclipse-temurin:21-jre-alpine AS runtime
 
-# Set Timezone
-ENV TZ=Asia/Tashkent
+FROM eclipse-temurin:21.0.7_6-jre-alpine-3.21
 
-# App directory and user
 WORKDIR /app
-ARG APPLICATION_USER=appuser
+RUN adduser -D -s /sbin/nologin pf && chown -R pf:pf /app
+USER pf
+COPY --chown=pf:pf --from=build /app/target/*.jar /app/app.jar
 
-RUN adduser --no-create-home -u 1000 -D $APPLICATION_USER && \
-    chown -R $APPLICATION_USER /app
-
-USER 1000
-
-# Copy the jar file from the build stage
-COPY --chown=1000:1000 --from=build /app/target/pf-exchange.jar /app/app.jar
-
-# Run the jar file with Spring profile
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT java -jar app.jar

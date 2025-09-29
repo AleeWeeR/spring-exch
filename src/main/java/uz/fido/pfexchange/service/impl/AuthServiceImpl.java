@@ -73,8 +73,6 @@ public class AuthServiceImpl implements AuthService {
                 .password(passwordEncoder.encode(register.getPassword()))
                 .name(register.getUsername())
                 .build();
-        user.setUserPermissions(Collections.emptySet());
         userService.save(user);
     }
-
 }

@@ -22,7 +22,7 @@ public class PfExchangeStatistics {
     @PostMapping("get-token")
     public ResponseEntity<?> GetToken(@RequestBody String body) {
         RestClient restClient = RestClient.create();
-        String url = "https://10.190.0.178/integration/token/";
+        String url = "https://api.siat.stat.uz/integration/token/";
 
         try {
 
@@ -50,7 +50,7 @@ public class PfExchangeStatistics {
     @PostMapping("send-by-district")
     public ResponseEntity<?> SendByRegion(@RequestBody StatisticsPostDto statisticsPostDto) {
         RestClient restClient = RestClient.create();
-        String url = "https://10.190.0.178/acquisition/import/";
+        String url = "https://api.siat.stat.uz/acquisition/import/";
 
         try {
 

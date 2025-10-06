@@ -7,5 +7,5 @@ import lombok.Setter;
 @Setter
 public class StatisticsPostDto {
     private String token;
-    private String data;
+    private Object data;
 }

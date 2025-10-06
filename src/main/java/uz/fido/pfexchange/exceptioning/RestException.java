@@ -3,7 +3,7 @@ package uz.fido.pfexchange.exceptioning;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import org.springframework.http.HttpStatus;
-import uz.fido.pfexchange.dto.ErrorDto;
+import uz.fido.pfexchange.dto.ResponseWrapperDto;
 
 import java.util.function.Supplier;
 
@@ -11,12 +11,12 @@ import java.util.function.Supplier;
 @Data
 public class RestException extends RuntimeException implements Supplier<RuntimeException> {
 
-    private ErrorDto errorDto;
+    private ResponseWrapperDto responseWrapperDto;
     private HttpStatus status;
 
-    public RestException(ErrorDto errorDto, HttpStatus status) {
-        super(errorDto.getMessage());
-        this.errorDto = errorDto;
+    public RestException(ResponseWrapperDto responseWrapperDto, HttpStatus status) {
+        super(responseWrapperDto.getMessage());
+        this.responseWrapperDto = responseWrapperDto;
         this.status = status;
     }
 
@@ -24,12 +24,12 @@ public class RestException extends RuntimeException implements Supplier<RuntimeE
         this.status = status;
     }
 
-    public static RestException restThrow(ErrorDto errorDto, HttpStatus status) {
-        return new RestException(errorDto, status);
+    public static RestException restThrow(ResponseWrapperDto responseWrapperDto, HttpStatus status) {
+        return new RestException(responseWrapperDto, status);
     }
 
-    public static RestException restThrow(ErrorDto errorDto) {
-        return new RestException(errorDto, HttpStatus.BAD_REQUEST);
+    public static RestException restThrow(ResponseWrapperDto responseWrapperDto) {
+        return new RestException(responseWrapperDto, HttpStatus.BAD_REQUEST);
     }
 
     public static RestException restThrow(HttpStatus status) {

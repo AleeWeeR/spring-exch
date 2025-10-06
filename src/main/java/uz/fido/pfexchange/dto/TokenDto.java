@@ -10,7 +10,6 @@ import java.io.Serializable;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@JacksonXmlRootElement(localName = "data")
 public class TokenDto implements Serializable {
     private String accessToken;
 }

@@ -1,52 +1,71 @@
 package uz.fido.pfexchange.exceptioning;
 
 import lombok.RequiredArgsConstructor;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.springframework.beans.ConversionNotSupportedException;
-import org.springframework.beans.TypeMismatchException;
+import org.apache.logging.log4j.*;
+import org.springframework.beans.*;
+import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.core.annotation.Order;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.EmptyResultDataAccessException;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.http.converter.HttpMessageNotWritableException;
+import org.springframework.dao.*;
+import org.springframework.http.*;
+import org.springframework.http.converter.*;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.InternalAuthenticationServiceException;
 import org.springframework.validation.BindException;
-import org.springframework.web.HttpMediaTypeNotAcceptableException;
-import org.springframework.web.HttpMediaTypeNotSupportedException;
-import org.springframework.web.HttpRequestMethodNotSupportedException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.MissingPathVariableException;
-import org.springframework.web.bind.MissingServletRequestParameterException;
-import org.springframework.web.bind.ServletRequestBindingException;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.*;
+import org.springframework.web.bind.*;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import uz.fido.pfexchange.config.Constants;
+import uz.fido.pfexchange.dto.ResponseWrapperDto;
 import uz.fido.pfexchange.utils.ResponseBuilder;
+
 
 @RestControllerAdvice
 @Order(value = Integer.MIN_VALUE)
 @RequiredArgsConstructor
-@ResponseStatus(HttpStatus.BAD_REQUEST)
 public class RestExceptionHandler {
     private static final Logger _logger = LogManager.getLogger(RestExceptionHandler.class);
 
-    @ExceptionHandler(value = {
-            RestException.class
-    })
-    public ResponseEntity<?> handleException10(RestException ex) {
-        _logger.error(ex);
-        return ResponseBuilder.get(ex.getErrorDto(), ex.getStatus());
+    // ✅ Custom exception
+    @ExceptionHandler(RestException.class)
+    public ResponseEntity<?> handleRestException(RestException ex) {
+        _logger.error(ex.getMessage(), ex);
+        return ResponseBuilder.get(ex.getResponseWrapperDto(), ex.getStatus());
     }
 
-    @ExceptionHandler(value = {
-            MethodArgumentNotValidException.class,
+    // ✅ Validation errors (asosiy o‘zgarish shu yerda)
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<?> handleValidationException(MethodArgumentNotValidException ex) {
+        String errorMessage = ex.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(o -> {
+                    _logger.error("-validation_error. field: {}, code: {}, message: {}", o.getField(), o.getCode(), o.getDefaultMessage());
+
+                    if (o.getCode() != null) {
+                        return switch (o.getCode()) {
+                            case "NotBlank", "NotNull" -> o.getField() + " bo'sh bo'lishi mumkin emas! :(";
+                            default -> o.getDefaultMessage();
+                        };
+                    }
+                    return o.getDefaultMessage();
+                })
+                .orElseGet(() -> {
+                    _logger.error("-validation_error. unknown error: {}", ex.getMessage());
+                    return "Noma'lum xatolik";
+                });
+
+        ResponseWrapperDto response = ResponseWrapperDto.builder()
+                .code(Constants.ERROR)
+                .message(errorMessage)
+                .build();
+
+        return ResponseEntity.ok(response);
+    }
+
+    // ✅ Qolgan "bad request" xatoliklari
+    @ExceptionHandler({
             TypeMismatchException.class,
             HttpMessageNotReadableException.class,
             MissingServletRequestPartException.class,
@@ -59,44 +78,43 @@ public class RestExceptionHandler {
             HttpRequestMethodNotSupportedException.class,
             HttpMediaTypeNotAcceptableException.class,
             HttpMediaTypeNotSupportedException.class,
-            AsyncRequestTimeoutException.class,
+            AsyncRequestTimeoutException.class
     })
-    public ResponseEntity<?> handleException20(Exception ex) {
-        _logger.error(ex);
+    public ResponseEntity<?> handleBadRequest(Exception ex) {
+        _logger.error("Bad request: {}", ex.getMessage(), ex);
         return ResponseBuilder.get(HttpStatus.BAD_REQUEST);
     }
 
-    @ExceptionHandler(value = {
-            InternalAuthenticationServiceException.class
-    })
-    public ResponseEntity<?> handleException30(Exception ex) {
-        _logger.error(ex);
+    // ✅ Auth xatoliklari
+    @ExceptionHandler(InternalAuthenticationServiceException.class)
+    public ResponseEntity<?> handleUnauthorized(Exception ex) {
+        _logger.error("Unauthorized: {}", ex.getMessage(), ex);
         return ResponseBuilder.get("Unauthorized", HttpStatus.UNAUTHORIZED);
     }
 
-    @ExceptionHandler(value = {
-            AccessDeniedException.class
-    })
-    public ResponseEntity<?> handleException40(Exception ex) {
-        _logger.error(ex);
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<?> handleForbidden(Exception ex) {
+        _logger.error("Access denied: {}", ex.getMessage(), ex);
         return ResponseBuilder.get("Access denied", HttpStatus.FORBIDDEN);
     }
 
-    @ExceptionHandler(value = {
+    // ✅ Not found
+    @ExceptionHandler({
             MissingPathVariableException.class,
             NoHandlerFoundException.class
     })
-    public ResponseEntity<?> handleException50(Exception ex) {
-        _logger.error(ex);
+    public ResponseEntity<?> handleNotFound(Exception ex) {
+        _logger.error("Not found: {}", ex.getMessage(), ex);
         return ResponseBuilder.get(HttpStatus.NOT_FOUND);
     }
 
-    @ExceptionHandler(value = {
+    // ✅ Umumiy xatolik
+    @ExceptionHandler({
             ConversionNotSupportedException.class,
-            Exception.class,
+            Exception.class
     })
-    public ResponseEntity<?> handleException70(Exception ex) {
-        _logger.fatal(ex);
+    public ResponseEntity<?> handleServerError(Exception ex) {
+        _logger.fatal("Server error: {}", ex.getMessage(), ex);
         return ResponseBuilder.get(ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }

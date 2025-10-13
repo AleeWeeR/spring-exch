@@ -25,6 +25,13 @@ spring:
         prepStmtCacheSize: 100
         prepStmtCacheSqlLimit: 1024
       leak-detection-threshold: 1000
+      connection-init-sql: >
+        BEGIN
+          EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TERRITORY=''CIS''';
+          EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,''';
+          EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_LANGUAGE=''AMERICAN''';
+          EXECUTE IMMEDIATE 'ALTER SESSION SET TIME_ZONE=DBTIMEZONE';
+        END;
   servlet:
     multipart:
       max-file-size: 2000MB
@@ -51,11 +58,11 @@ server:
 # Logging
 logging:
   level:
-    root: error
+    root: info
     org.springframework:
-      web: error
+      web: info
     io: info
-    uz.fido.pf-exchange: debug # ????? ??????????? ???????
+    uz.fido.pfexchange: debug # ????? ??????????? ???????
 
 jwt:
   secretKey: 5A7134743777397A24432646294A404635266556A5863272357538782F4125

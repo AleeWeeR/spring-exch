@@ -11,8 +11,8 @@ import lombok.*;
 @AllArgsConstructor
 @JacksonXmlRootElement(localName = "root")
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class ResponseWrapperDto {
+public class ResponseWrapperDto <T> {
     private Integer code;
     private String message;
-    private Object data;
+    private T data;
 }

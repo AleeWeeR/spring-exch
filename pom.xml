@@ -136,7 +136,6 @@
                         <path>
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
-                            <version>1.18.32</version> <!-- versiyani qo‘shdik -->
                         </path>
                     </annotationProcessorPaths>
                 </configuration>

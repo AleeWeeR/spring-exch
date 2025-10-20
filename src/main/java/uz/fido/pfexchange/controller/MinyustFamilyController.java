@@ -7,6 +7,7 @@ import uz.fido.pfexchange.dto.MinyustFamilyBatchResponseDto;
 import uz.fido.pfexchange.dto.ResponseWrapperDto;
 import uz.fido.pfexchange.service.MinyustFamilyBatchRequestProcessor;
 import uz.fido.pfexchange.utils.MinyustFamilyBatchStatus;
+import uz.fido.pfexchange.utils.ResponseBuilder;
 
 @RestController
 @RequiredArgsConstructor
@@ -17,14 +18,12 @@ public class MinyustFamilyController {
     private volatile boolean isProcessing = false;
 
     @PostMapping( "send-by-pnfl")
-    public ResponseEntity<ResponseWrapperDto> startProcessingByPnfl() {
+    public ResponseEntity<ResponseWrapperDto<MinyustFamilyBatchResponseDto>> startProcessingByPnfl() {
         if (isProcessing) {
             MinyustFamilyBatchResponseDto response = new MinyustFamilyBatchResponseDto();
             response.setStatus(MinyustFamilyBatchStatus.ALREADY_RUNNING);
             response.setMessage("Batch processing is already in progress");
-            return ResponseEntity.ok(
-                    ResponseWrapperDto.builder().data(response).build()
-            );
+            return ResponseBuilder.ok(response);
         }
 
         isProcessing = true;
@@ -42,19 +41,15 @@ public class MinyustFamilyController {
         response.setMessage("Batch processing is started");
         response.setPendingCount(processor.getPendingCount());
 
-        return ResponseEntity.ok(
-                ResponseWrapperDto.builder().data(response).build()
-        );
+        return ResponseBuilder.ok(response);
     }
 
     @GetMapping("/status")
-    public ResponseEntity<ResponseWrapperDto> getStatus() {
+    public ResponseEntity<ResponseWrapperDto<MinyustFamilyBatchResponseDto>> getStatus() {
         MinyustFamilyBatchResponseDto response = new MinyustFamilyBatchResponseDto();
         response.setStatus(MinyustFamilyBatchStatus.PROCESSING);
         response.setPendingCount(processor.getPendingCount());
-        return ResponseEntity.ok(
-                ResponseWrapperDto.builder().data(response).build()
-        );
+        return ResponseBuilder.ok(response);
     }
 
 }

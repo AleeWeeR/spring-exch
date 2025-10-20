@@ -11,25 +11,26 @@ import io.swagger.v3.oas.annotations.security.SecuritySchemes;
 
 @OpenAPIDefinition(
         info = @Info(
+                title = "Pension Integration Service",
+                description = "Handles integration between the pension system and external government or third-party services.",
+                version = "1.0",
                 contact = @Contact(
-                        name = "Bekzod",
-                        email = "bekzodavazbekugli@gmail.com"
-                ),
-                title = "Card Processing Service Documentation",
-                version = "1.0"
+                        name = "Muxammadsodiq",
+                        email = "7727047@gmail.com"
+                )
         ),
         security = {
-                @SecurityRequirement(
-                        name = "BearerAuth"
-                )
+                @SecurityRequirement(name = "BearerAuth")
         }
 )
 @SecuritySchemes({
-        @SecurityScheme(name = "BearerAuth",
+        @SecurityScheme(
+                name = "BearerAuth",
                 scheme = "bearer",
                 type = SecuritySchemeType.HTTP,
                 in = SecuritySchemeIn.HEADER,
-                bearerFormat = "JWT"),
+                bearerFormat = "JWT"
+        ),
 })
 public class OpenApiConfig {
 }

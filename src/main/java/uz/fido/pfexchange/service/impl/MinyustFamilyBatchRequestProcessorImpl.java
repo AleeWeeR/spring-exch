@@ -2,8 +2,10 @@ package uz.fido.pfexchange.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import uz.fido.pfexchange.dto.MinyustFamilyItemDto;
 import uz.fido.pfexchange.dto.MinyustFamilyRequestDto;
@@ -145,13 +147,29 @@ public class MinyustFamilyBatchRequestProcessorImpl implements MinyustFamilyBatc
     }
 
     private MinyustFamilyResponseDto callExternalService(MinyustFamilyRequestDto requestDto) {
-        return restClient
-                .post()
-                .uri(URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(requestDto)
-                .retrieve()
-                .body(MinyustFamilyResponseDto.class);
+        try {
+            log.info("Calling external service: {} with body: {}", URL, requestDto);
+
+            return restClient
+                    .post()
+                    .uri(URL)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(requestDto)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, (request, response) -> {
+                        log.error("4xx error: {}", response.getStatusCode());
+                        throw new IllegalArgumentException("Client error: " + response.getStatusCode());
+                    })
+                    .onStatus(HttpStatusCode::is5xxServerError, (request, response) -> {
+                        log.error("5xx error: {}", response.getStatusCode());
+                        throw new IllegalStateException("Server error: " + response.getStatusCode());
+                    })
+                    .body(MinyustFamilyResponseDto.class);
+
+        } catch (ResourceAccessException e) {
+            log.error("I/O error connecting to {}: {}", URL, e.getMessage(), e);
+            throw new RuntimeException("Failed to connect to external service", e);
+        }
     }
 
     private PfWomenChildrenInf mapToEntity(MinyustFamilyItemDto dto, PfWomen pfWomen) {

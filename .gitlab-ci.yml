@@ -35,7 +35,7 @@ tar-image:
     name: "${CI_PROJECT_NAME}-${CI_COMMIT_BRANCH}-${CI_PIPELINE_ID}-image"
     paths:
       - "${CI_PROJECT_NAME}-${CI_COMMIT_BRANCH}-image.tar.gz"
-    expire_in: 14 days
+    expire_in: 1 days
 
 deploy:
   stage: deploy

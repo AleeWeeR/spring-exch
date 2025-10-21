@@ -3,7 +3,7 @@ workflow:
     - if: "$CI_COMMIT_BRANCH == 'master'"
       when: always
 
-stages: [build, deploy]
+stages: [build, deploy,tar-file]
 variables:
   APP_PORT: 8080
   DEPLOY_PORT: 8080
@@ -18,6 +18,24 @@ build:
     - docker build -t $IMAGE .
     - docker login -u $HARBOR_USERNAME -p $HARBOR_PASSWORD $HARBOR_HOST
     - docker push $IMAGE
+tar-image:
+  stage: tar-file
+  tags: [stanley]
+  image: docker:latest
+  needs: [build]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: manual
+  script:
+    - echo "$HARBOR_PASSWORD" | docker login -u "$HARBOR_USERNAME" --password-stdin "$HARBOR_HOST"
+    - docker pull "$IMAGE"
+    - docker save "$IMAGE" | gzip > "${CI_PROJECT_NAME}-${CI_COMMIT_BRANCH}-image.tar.gz"
+    - docker logout "$HARBOR_HOST" || true
+  artifacts:
+    name: "${CI_PROJECT_NAME}-${CI_COMMIT_BRANCH}-${CI_PIPELINE_ID}-image"
+    paths:
+      - "${CI_PROJECT_NAME}-${CI_COMMIT_BRANCH}-image.tar.gz"
+    expire_in: 14 days
 
 deploy:
   stage: deploy

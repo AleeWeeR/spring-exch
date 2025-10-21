@@ -57,7 +57,7 @@ public class RestExceptionHandler {
                     return "Noma'lum xatolik";
                 });
 
-        return ResponseBuilder.getError(HttpStatus.OK, errorMessage);
+        return ResponseBuilder.getError(HttpStatus.BAD_REQUEST, errorMessage);
     }
 
     // ✅ Qolgan "bad request" xatoliklari

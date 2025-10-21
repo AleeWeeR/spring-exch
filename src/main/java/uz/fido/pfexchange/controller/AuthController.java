@@ -38,6 +38,6 @@ public class AuthController {
     public ResponseEntity<ResponseWrapperDto<Object>> register(@Valid @RequestBody RegisterDto register) {
         authService.register(register);
         _logger.info("Register success. user -> {}", register);
-        return ResponseBuilder.getError(HttpStatus.OK, "Ma'lumotlar muvaffaqqiyatli saqlandi!");
+        return ResponseBuilder.getSuccess(HttpStatus.OK, "Ma'lumotlar muvaffaqqiyatli saqlandi!");
     }
 }

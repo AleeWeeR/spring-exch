@@ -1,5 +1,7 @@
 package uz.fido.pfexchange.security;
 
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import com.google.gson.Gson;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -14,6 +16,8 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import uz.fido.pfexchange.config.Constants;
+import uz.fido.pfexchange.dto.ResponseWrapperDto;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -23,7 +27,9 @@ import java.util.Objects;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
 
-    private static final Logger _logger = LogManager.getLogger(JwtAuthenticationFilter.class);
+    private final Logger _logger = LogManager.getLogger(JwtAuthenticationFilter.class);
+    private final XmlMapper mapper = new XmlMapper();
+    private final Gson gson;
 
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
@@ -60,8 +66,31 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         } catch (Exception e) {
             _logger.error(e);
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"success\": false, \"message\": \"Unauthorized\"}");
+
+            ResponseWrapperDto<?> responseWrapperDto = ResponseWrapperDto.builder()
+                    .code(Constants.ERROR)
+                    .message("Unauthorized")
+                    .build();
+
+            String contentType;
+
+            try {
+                contentType = request.getHeader("Accept");
+            } catch (Exception ignored) {
+                contentType = null;
+            }
+
+            String body;
+            if (Objects.nonNull(contentType) && contentType.contains("application/xml")) {
+                body = mapper.writeValueAsString(responseWrapperDto);
+                response.setContentType("application/xml");
+            } else {
+                body = gson.toJson(responseWrapperDto);
+                response.setContentType("application/json");
+            }
+
+
+            response.getWriter().write(body);
         }
     }
 }

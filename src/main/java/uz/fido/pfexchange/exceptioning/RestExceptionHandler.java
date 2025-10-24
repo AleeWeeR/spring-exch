@@ -29,7 +29,7 @@ public class RestExceptionHandler {
     // ✅ Custom exception
     @ExceptionHandler(RestException.class)
     public ResponseEntity<ResponseWrapperDto<Object>> handleRestException(RestException ex) {
-        _logger.error(ex.getMessage(), ex);
+        _logger.error("RestException: {}", ex.getMessage());
         return ResponseBuilder.get(ex.getResponseWrapperDto().getData(),
                 ex.getStatus(),
                 ex.getResponseWrapperDto().getCode(),
@@ -57,7 +57,7 @@ public class RestExceptionHandler {
                     return "Noma'lum xatolik";
                 });
 
-        return ResponseBuilder.getError(HttpStatus.OK, errorMessage);
+        return ResponseBuilder.getError(HttpStatus.BAD_REQUEST, errorMessage);
     }
 
     // ✅ Qolgan "bad request" xatoliklari

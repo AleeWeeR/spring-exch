@@ -1,4 +1,4 @@
-package uz.fido.pfexchange.entity;
+package uz.fido.pfexchange.entity.minyust;
 
 import jakarta.persistence.*;
 import lombok.*;

@@ -3,8 +3,9 @@ package uz.fido.pfexchange.controller;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import uz.fido.pfexchange.dto.MinyustFamilyBatchResponseDto;
+
 import uz.fido.pfexchange.dto.ResponseWrapperDto;
+import uz.fido.pfexchange.dto.minyust.MinyustFamilyBatchResponseDto;
 import uz.fido.pfexchange.service.MinyustFamilyBatchRequestProcessor;
 import uz.fido.pfexchange.utils.MinyustFamilyBatchStatus;
 import uz.fido.pfexchange.utils.ResponseBuilder;

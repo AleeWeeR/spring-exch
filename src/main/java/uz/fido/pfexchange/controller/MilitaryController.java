@@ -17,7 +17,7 @@ public class MilitaryController {
     
     private final MilitaryService militaryService;
 
-    @PostMapping( "send-by-pnfl")
+    @PostMapping
     public ResponseEntity<ResponseWrapperDto<MilitaryResponseDto>> sendRequest(
         @RequestBody MilitaryRequestDto requestDto,
         @RequestParam(required = false) String username,

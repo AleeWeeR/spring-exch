@@ -1,4 +1,4 @@
-package uz.fido.pfexchange.dto;
+package uz.fido.pfexchange.dto.minyust;
 
 import lombok.*;
 import uz.fido.pfexchange.utils.MinyustFamilyBatchStatus;

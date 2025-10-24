@@ -1,7 +1,8 @@
-package uz.fido.pfexchange.entity;
+package uz.fido.pfexchange.entity.minyust;
 
 import jakarta.persistence.*;
 import lombok.*;
+
 import java.time.LocalDate;
 
 @Entity

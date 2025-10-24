@@ -7,9 +7,7 @@ import org.springframework.web.bind.annotation.*;
 import uz.fido.pfexchange.dto.ResponseWrapperDto;
 import uz.fido.pfexchange.dto.military.MilitaryRequestDto;
 import uz.fido.pfexchange.dto.military.MilitaryResponseDto;
-import uz.fido.pfexchange.dto.minyust.MinyustFamilyBatchResponseDto;
-import uz.fido.pfexchange.service.MinyustFamilyBatchRequestProcessor;
-import uz.fido.pfexchange.utils.MinyustFamilyBatchStatus;
+import uz.fido.pfexchange.service.MilitaryService;
 import uz.fido.pfexchange.utils.ResponseBuilder;
 
 @RestController
@@ -26,7 +24,7 @@ public class MilitaryController {
         @RequestParam(required = false) String password,
         @RequestParam(required = false) String url
     ) {
-        return militaryService.sendRequest(requestDto, username, password, url);
+        return ResponseBuilder.ok(militaryService.sendRequest(requestDto, username, password, url));
     }
 
 }

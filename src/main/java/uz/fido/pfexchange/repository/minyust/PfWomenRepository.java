@@ -1,9 +1,10 @@
-package uz.fido.pfexchange.repository;
+package uz.fido.pfexchange.repository.minyust;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import uz.fido.pfexchange.entity.PfWomen;
+
+import uz.fido.pfexchange.entity.minyust.PfWomen;
 
 import java.util.List;
 

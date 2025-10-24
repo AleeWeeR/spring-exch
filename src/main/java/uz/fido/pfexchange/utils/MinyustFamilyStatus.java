@@ -6,6 +6,7 @@ public enum MinyustFamilyStatus {
     PROCESSING,
     COMPLETED,
     FAILED,
-    DIFFERENT
+    DIFFERENT,
+    NOT_FOUND
 
 }

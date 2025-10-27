@@ -1,7 +1,6 @@
 package uz.fido.pfexchange.service.impl;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
@@ -11,6 +10,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import uz.fido.pfexchange.dto.military.MilitaryRequestDto;
 import uz.fido.pfexchange.dto.military.MilitaryResponseDto;
+import uz.fido.pfexchange.repository.CustomQueryRepository;
 import uz.fido.pfexchange.service.*;
 
 @Slf4j
@@ -18,47 +18,36 @@ import uz.fido.pfexchange.service.*;
 @RequiredArgsConstructor
 public class MilitaryServiceImpl implements MilitaryService {
 
+    private final ObjectMapper objectMapper;
+    private final CustomQueryRepository customQueryRepository;
     private final RestClient restClient = RestClient.create();
-    private final String URL = "http://10.190.24.50/api/pension/v1/person";
+    private final String URL =
+        "https://apimgw.egov.uz:8243/mudofaa/millitary/info/v1";
 
     @Override
-    public MilitaryResponseDto sendRequest(
-        MilitaryRequestDto requestDto,
-        String username,
-        String password,
-        String url
-    ) {
-        return callExternalService(requestDto, username, password, url);
+    public MilitaryResponseDto sendRequest(MilitaryRequestDto requestDto) {
+        String tokenJson = customQueryRepository.getTokenJson();
+        String token = extractAccessToken(tokenJson);
+        return callExternalService(requestDto, token);
     }
 
     private MilitaryResponseDto callExternalService(
         MilitaryRequestDto requestDto,
-        String username,
-        String password,
-        String url
+        String token
     ) {
         try {
             log.info(
                 "Calling external service: {} with body: {}",
-                url != null ? url : URL,
+                URL,
                 requestDto
             );
 
-            RestClient.RequestBodySpec request = restClient
+            return restClient
                 .post()
-                .uri(url != null ? url : URL)
+                .uri(URL)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(requestDto);
-
-            if (username != null && password != null) {
-                String credentials = username + ":" + password;
-                String encodedCredentials = Base64.getEncoder().encodeToString(
-                    credentials.getBytes(StandardCharsets.UTF_8)
-                );
-                request.header("Authorization", "Basic " + encodedCredentials);
-            }
-
-            return request
+                .header("Authorization", "Bearer " + token)
+                .body(requestDto)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, (req, response) -> {
                     log.error("4xx error: {}", response.getStatusCode());
@@ -79,6 +68,14 @@ public class MilitaryServiceImpl implements MilitaryService {
                 "Failed to connect to external service",
                 e
             );
+        }
+    }
+
+    private String extractAccessToken(String json) {
+        try {
+            return objectMapper.readTree(json).get("access_token").asText();
+        } catch (Exception e) {
+            return null;
         }
     }
 }

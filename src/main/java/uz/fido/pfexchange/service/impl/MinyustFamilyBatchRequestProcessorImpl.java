@@ -13,7 +13,6 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
-
 import uz.fido.pfexchange.dto.minyust.MinyustFamilyItemDto;
 import uz.fido.pfexchange.dto.minyust.MinyustFamilyRequestDto;
 import uz.fido.pfexchange.dto.minyust.MinyustFamilyResponseDto;
@@ -104,15 +103,17 @@ public class MinyustFamilyBatchRequestProcessorImpl
 
                         if (
                             response.getItems() != null &&
-                                    !response.getItems().isEmpty()
+                            !response.getItems().isEmpty()
                         ) {
                             currentExchangeChildren = response
                                 .getItems()
                                 .stream()
-                                .filter(member ->
-                                    member
-                                        .getM_pnfl()
-                                        .equals(request.getPinpp())
+                                .filter(
+                                    member ->
+                                        member.getM_pnfl() != null &&
+                                        member
+                                            .getM_pnfl()
+                                            .equals(request.getPinpp())
                                 )
                                 .map(MinyustFamilyItemDto::getPnfl)
                                 .toList();
@@ -127,9 +128,9 @@ public class MinyustFamilyBatchRequestProcessorImpl
                             } else if (
                                 currentExchangeChildren.size() !=
                                     currentSavedChildren.size() ||
-                                !new HashSet<>(currentExchangeChildren).containsAll(
-                                    currentSavedChildren
-                                )
+                                !new HashSet<>(
+                                    currentExchangeChildren
+                                ).containsAll(currentSavedChildren)
                             ) {
                                 request.setStatus(
                                     MinyustFamilyStatus.DIFFERENT

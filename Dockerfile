@@ -14,4 +14,4 @@ RUN adduser -D -s /sbin/nologin pf && chown -R pf:pf /app
 USER pf
 COPY --chown=pf:pf --from=build /app/target/*.jar /app/app.jar
 
-ENTRYPOINT java -jar app.jar
+ENTRYPOINT exec java -jar app.jar

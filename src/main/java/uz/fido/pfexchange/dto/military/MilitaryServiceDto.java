@@ -2,7 +2,6 @@ package uz.fido.pfexchange.dto.military;
 
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
-import java.util.List;
 import lombok.*;
 
 @Getter
@@ -14,5 +13,5 @@ import lombok.*;
 public class MilitaryServiceDto {
 
     private String code;
-    private List<MilitaryLangDto> name;
+    MilitaryLangDto name;
 }

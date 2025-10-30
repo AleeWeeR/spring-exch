@@ -127,19 +127,32 @@ public class MilitaryServiceImpl implements MilitaryService {
             "\"body_type\": \"json\"," +
             "\"data_body\": {" +
             "\"pin\": \"" +
-            requestDto.getPin() +
+            escapeJson(requestDto.getPin()) +
             "\"," +
             "\"sender_pin\": \"" +
-            requestDto.getSenderPin() +
+            escapeJson(requestDto.getSenderPin()) +
             "\"," +
             "\"transaction_id\": " +
             requestDto.getTransactionId() +
             "," +
             "\"purpose\": \"" +
-            requestDto.getPurpose() +
+            escapeJson(requestDto.getPurpose()) +
+            "\"," +
+            "\"consent\": \"" +
+            escapeJson(requestDto.getConsent()) +
             "\"" +
             "}" +
             "}"
         );
+    }
+
+    private String escapeJson(String value) {
+        if (value == null) return "";
+        return value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t");
     }
 }

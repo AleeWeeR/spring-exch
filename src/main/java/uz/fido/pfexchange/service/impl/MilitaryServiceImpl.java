@@ -26,7 +26,7 @@ public class MilitaryServiceImpl implements MilitaryService {
     private final CustomQueryRepository customQueryRepository;
     private final RestClient restClient = RestClient.create();
     private final String URL =
-        "http://172.17.1.180:7001/PF/pf/mip/sendPensionerForCheck.jsp";
+        "http://172.17.1.180:7001/pf/pf/mip/sendPensionerForCheck.jsp";
 
     @Override
     public MilitaryResponseDto sendRequest(MilitaryRequestDto requestDto) {

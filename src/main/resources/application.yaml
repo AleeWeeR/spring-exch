@@ -1,6 +1,4 @@
 spring:
-  config:
-    import: optional:file:.env[.properties]
   application:
     name: pf-exchange
   main:
@@ -47,7 +45,7 @@ spring:
       ddl-auto: none
 # Server
 server:
-  port: 8087
+  port: 8080
   compression:
     enabled: true
     min-response-size: 32
@@ -69,7 +67,3 @@ logging:
 jwt:
   secretKey: 5A7134743777397A24432646294A404635266556A5863272357538782F4125
   expireHours: 24
-
-springdoc:
-  override-with-generic-response: false
-  remove-broken-reference-definitions: false

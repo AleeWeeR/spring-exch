@@ -1,10 +1,12 @@
 package uz.fido.pfexchange.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
@@ -17,14 +19,17 @@ import uz.fido.pfexchange.config.Constants;
 import uz.fido.pfexchange.dto.ResponseWrapperDto;
 import uz.fido.pfexchange.dto.diagnostic.DiagnosticResponse;
 import uz.fido.pfexchange.dto.diagnostic.TestRequest;
+import uz.fido.pfexchange.repository.CustomQueryRepository;
 
 @Slf4j
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/diagnostic")
 public class NetworkDiagnosticController {
 
-    @Autowired
-    private RestTemplate restTemplate;
+    private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
+    private final CustomQueryRepository customQueryRepository;
 
     @PostMapping("/test-endpoint")
     public ResponseEntity<ResponseWrapperDto<DiagnosticResponse>> testEndpoint(
@@ -44,6 +49,15 @@ public class NetworkDiagnosticController {
         try {
             // DNS Resolution Test
             performDnsResolution(request.getUrl(), response);
+
+            // apimgw.egov.uz
+            if (request.getUrl().contains("apimgw.egov.uz")) {
+                String tokenJson = customQueryRepository.getTokenJson();
+                String token = extractAccessToken(tokenJson);
+                request
+                    .getHeaders()
+                    .putIfAbsent("Authorization", "Bearer " + token);
+            }
 
             // Network Connectivity Test
             performConnectivityTest(request, response);
@@ -299,5 +313,13 @@ public class NetworkDiagnosticController {
         }
 
         return details;
+    }
+
+    private String extractAccessToken(String json) {
+        try {
+            return objectMapper.readTree(json).get("access_token").asText();
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

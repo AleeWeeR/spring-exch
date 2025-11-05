@@ -2,7 +2,6 @@ package uz.fido.pfexchange.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -33,14 +32,6 @@ public class MipReportController {
     public ResponseEntity<ResponseWrapperDto<MipReportResponseDto>> pensionInfo(
         @Valid @RequestBody MipReportRequestDto requestDto
     ) {
-        MipReportResponseDto response = mipReportService.pensionInfo(
-            requestDto
-        );
-
-        if (response == null) {
-            return ResponseEntity.noContent().build();
-        }
-
         return ResponseBuilder.ok(mipReportService.pensionInfo(requestDto));
     }
 }

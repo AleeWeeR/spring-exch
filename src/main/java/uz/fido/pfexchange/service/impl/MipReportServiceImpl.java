@@ -31,7 +31,10 @@ public class MipReportServiceImpl implements MipReportService {
             requestDto.getWsId()
         );
 
-        // Check return code
+        if (functionResult.getReturnCode() == 204) {
+            log.warn("No data found for PINPP: {}", requestDto.getPinfl());
+            return null;
+        }
         if (
             functionResult.getReturnCode() == null ||
             functionResult.getReturnCode() != 200

@@ -1,16 +1,17 @@
 package uz.fido.pfexchange.controller;
 
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import jakarta.validation.Valid;
 import uz.fido.pfexchange.dto.ResponseWrapperDto;
-import uz.fido.pfexchange.dto.minyust.MinyustFamilyBatchResponseDto;
 import uz.fido.pfexchange.dto.mip.MipReportRequestDto;
 import uz.fido.pfexchange.dto.mip.MipReportResponseDto;
-import uz.fido.pfexchange.service.MinyustFamilyBatchRequestProcessor;
 import uz.fido.pfexchange.service.MipReportService;
-import uz.fido.pfexchange.utils.MinyustFamilyBatchStatus;
 import uz.fido.pfexchange.utils.ResponseBuilder;
 
 @RestController
@@ -30,8 +31,16 @@ public class MipReportController {
         }
     )
     public ResponseEntity<ResponseWrapperDto<MipReportResponseDto>> pensionInfo(
-        @RequestBody MipReportRequestDto requestDto
+        @Valid @RequestBody MipReportRequestDto requestDto
     ) {
+        MipReportResponseDto response = mipReportService.pensionInfo(
+            requestDto
+        );
+
+        if (response == null) {
+            return ResponseEntity.noContent().build();
+        }
+
         return ResponseBuilder.ok(mipReportService.pensionInfo(requestDto));
     }
 }

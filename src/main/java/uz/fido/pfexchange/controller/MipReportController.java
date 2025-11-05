@@ -1,13 +1,12 @@
 package uz.fido.pfexchange.controller;
 
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-
-import jakarta.validation.Valid;
 import uz.fido.pfexchange.dto.ResponseWrapperDto;
 import uz.fido.pfexchange.dto.mip.MipReportRequestDto;
 import uz.fido.pfexchange.dto.mip.MipReportResponseDto;
@@ -21,6 +20,7 @@ public class MipReportController {
 
     private final MipReportService mipReportService;
 
+    @PreAuthorize(value = "hasAnyAuthority('GET_MIP_INFO')")
     @PostMapping(
         value = "/pension-info",
         consumes = {

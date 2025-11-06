@@ -14,7 +14,10 @@ import lombok.*;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(name = "root", description = "Standard API response wrapper")
 public class ResponseWrapperDto <T> {
+    @Schema(description = "Response code")
     private Integer code;
+    @Schema(description = "Response message")
     private String message;
+    @Schema(description = "Response data payload")
     private T data;
 }

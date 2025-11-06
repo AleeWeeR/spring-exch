@@ -29,7 +29,7 @@ public class RestExceptionHandler {
     // ✅ Custom exception
     @ExceptionHandler(RestException.class)
     public ResponseEntity<ResponseWrapperDto<Object>> handleRestException(RestException ex) {
-        _logger.error(ex.getMessage(), ex);
+        _logger.error("RestException: {}", ex.getMessage());
         return ResponseBuilder.get(ex.getResponseWrapperDto().getData(),
                 ex.getStatus(),
                 ex.getResponseWrapperDto().getCode(),

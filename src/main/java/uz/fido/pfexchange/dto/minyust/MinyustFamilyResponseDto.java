@@ -1,8 +1,7 @@
-package uz.fido.pfexchange.dto;
-
-import lombok.*;
+package uz.fido.pfexchange.dto.minyust;
 
 import java.util.List;
+import lombok.*;
 
 @Getter
 @Setter
@@ -16,5 +15,4 @@ public class MinyustFamilyResponseDto {
     private String result_code;
     private String id;
     private List<MinyustFamilyItemDto> items;
-
 }

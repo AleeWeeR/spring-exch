@@ -1,21 +1,27 @@
 package uz.fido.pfexchange.service.impl;
 
+import com.google.common.util.concurrent.RateLimiter;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import uz.fido.pfexchange.dto.minyust.MinyustFamilyItemDto;
 import uz.fido.pfexchange.dto.minyust.MinyustFamilyRequestDto;
 import uz.fido.pfexchange.dto.minyust.MinyustFamilyResponseDto;
+import uz.fido.pfexchange.dto.minyust.ProcessingResult;
 import uz.fido.pfexchange.entity.minyust.PfWomen;
 import uz.fido.pfexchange.entity.minyust.PfWomenChildrenInf;
 import uz.fido.pfexchange.repository.minyust.PfExchangeMinyustFamilyInfRepository;
@@ -32,30 +38,40 @@ public class MinyustFamilyBatchRequestProcessorImpl
     implements MinyustFamilyBatchRequestProcessor {
 
     private final PfWomenRepository repository;
+
+    private final RateLimiter rateLimiter = RateLimiter.create(50.0);
+    private final ExecutorService executorService = createExecutor();
     private final PfWomenChildrenInfRepository childrenRepository;
     private final PfExchangeMinyustFamilyInfRepository minyustFamilyInfRepository;
-    private final RestClient restClient = RestClient.create();
+    private final RestClient restClient = createRestClient();
 
     private static final Integer DEFAULT_GENDER = 0;
     private static final Long DEFAULT_ID = 0L;
     private static final LocalDate DEFAULT_DATE = LocalDate.of(1900, 1, 1);
-    private static final int REQUESTS_PER_SECOND = 50;
-    private static final long DELAY_MS = 1000 / REQUESTS_PER_SECOND;
     DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final String URL =
         "http://10.190.24.138:96/api/ZagsToMinFin/GetFamily";
 
+    private ExecutorService createExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("minyust-batch-");
+        executor.initialize();
+        return executor.getThreadPoolExecutor();
+    }
+
     @Override
     public void processAllPendingRequests() {
-        log.info("Starting batch processing...");
+        log.info("Starting parallel batch processing...");
 
         int batchSize = 1000;
         int totalProcessed = 0;
         int totalSuccess = 0;
         int totalFailed = 0;
-        List<String> currentExchangeChildren;
-        List<String> currentSavedChildren;
-        int id = 1;
+
+        AtomicInteger idCounter = new AtomicInteger(1);
 
         while (true) {
             List<PfWomen> batch = repository.findByStatusWithLimit(
@@ -68,115 +84,52 @@ public class MinyustFamilyBatchRequestProcessorImpl
                 break;
             }
 
-            log.info("Processing batch of {} records", batch.size());
+            log.info(
+                "Processing batch of {} records in parallel",
+                batch.size()
+            );
 
-            for (PfWomen request : batch) {
+            List<CompletableFuture<ProcessingResult>> futures = batch
+                .stream()
+                .map(request ->
+                    CompletableFuture.supplyAsync(
+                        () ->
+                            processRequest(
+                                request,
+                                idCounter.getAndIncrement()
+                            ),
+                        executorService
+                    )
+                )
+                .toList();
+
+            CompletableFuture.allOf(
+                futures.toArray(new CompletableFuture[0])
+            ).join();
+
+            for (CompletableFuture<ProcessingResult> future : futures) {
                 try {
-                    request.setStatus(MinyustFamilyStatus.PROCESSING);
-                    repository.save(request);
-
-                    MinyustFamilyResponseDto response = callExternalService(
-                        MinyustFamilyRequestDto.builder()
-                            .ID(String.valueOf(id++))
-                            .pnfl(request.getPinpp())
-                            .tin("20201210")
-                            .build()
-                    );
-
-                    if ("1".equals(response.getResult_code())) {
-                        if (
-                            response.getItems() != null &&
-                            !response.getItems().isEmpty()
-                        ) {
-                            for (MinyustFamilyItemDto item : response.getItems()) {
-                                PfWomenChildrenInf childRecord = mapToEntity(
-                                    item,
-                                    request
-                                );
-                                childrenRepository.save(childRecord);
-                            }
-                        }
-
-                        request.setStatus(MinyustFamilyStatus.COMPLETED);
-                        request.setRequestDate(LocalDateTime.now());
-                        request.setDataIn(response.toString());
-
-                        if (
-                            response.getItems() != null &&
-                            !response.getItems().isEmpty()
-                        ) {
-                            currentExchangeChildren = response
-                                .getItems()
-                                .stream()
-                                .filter(
-                                    member ->
-                                        member.getM_pnfl() != null &&
-                                        member
-                                            .getM_pnfl()
-                                            .equals(request.getPinpp())
-                                )
-                                .map(MinyustFamilyItemDto::getPnfl)
-                                .toList();
-                            currentSavedChildren = minyustFamilyInfRepository
-                                .getLatestMinyustByPinpp(request.getPinpp())
-                                .orElse(null);
-
-                            if (currentSavedChildren == null) {
-                                request.setStatus(
-                                    MinyustFamilyStatus.NOT_FOUND
-                                );
-                            } else if (
-                                currentExchangeChildren.size() !=
-                                    currentSavedChildren.size() ||
-                                !new HashSet<>(
-                                    currentExchangeChildren
-                                ).containsAll(currentSavedChildren)
-                            ) {
-                                request.setStatus(
-                                    MinyustFamilyStatus.DIFFERENT
-                                );
-                            }
-                        }
+                    ProcessingResult result = future.get();
+                    if (result.isSuccess()) {
+                        totalSuccess++;
                     } else {
-                        request.setStatus(MinyustFamilyStatus.FAILED);
-                        request.setRequestDate(LocalDateTime.now());
-                        request.setDataErr(
-                            "Result code: " +
-                                response.getResult_code() +
-                                ", Message: " +
-                                response.getResult_message()
-                        );
+                        totalFailed++;
                     }
-
-                    repository.save(request);
-
-                    totalSuccess++;
+                    totalProcessed++;
                 } catch (Exception e) {
-                    log.error(
-                        "Failed to process request {}: {}",
-                        request.getId(),
-                        e.getMessage()
-                    );
-
-                    request.setStatus(MinyustFamilyStatus.FAILED);
-                    request.setDataErr(e.getMessage());
-                    repository.save(request);
-
+                    log.error("Error getting result", e);
                     totalFailed++;
+                    totalProcessed++;
                 }
+            }
 
-                totalProcessed++;
-
-                rateLimitDelay();
-
-                if (totalProcessed % 100 == 0) {
-                    log.info(
-                        "Progress: {} processed (Success: {}, Failed: {})",
-                        totalProcessed,
-                        totalSuccess,
-                        totalFailed
-                    );
-                }
+            if (totalProcessed % 100 == 0) {
+                log.info(
+                    "Progress: {} processed (Success: {}, Failed: {})",
+                    totalProcessed,
+                    totalSuccess,
+                    totalFailed
+                );
             }
         }
 
@@ -188,14 +141,102 @@ public class MinyustFamilyBatchRequestProcessorImpl
         );
     }
 
-    private void rateLimitDelay() {
+    private ProcessingResult processRequest(PfWomen request, int id) {
+        List<String> currentExchangeChildren;
+        List<String> currentSavedChildren;
+
         try {
-            Thread.sleep(DELAY_MS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Processing interrupted");
-            throw new RuntimeException("Processing interrupted", e);
+            request.setStatus(MinyustFamilyStatus.PROCESSING);
+            repository.save(request);
+
+            rateLimiter.acquire();
+
+            MinyustFamilyResponseDto response = callExternalService(
+                MinyustFamilyRequestDto.builder()
+                    .ID(String.valueOf(id))
+                    .pnfl(request.getPinpp())
+                    .tin("20201210")
+                    .build()
+            );
+
+            if ("1".equals(response.getResult_code())) {
+                if (
+                    response.getItems() != null &&
+                    !response.getItems().isEmpty()
+                ) {
+                    for (MinyustFamilyItemDto item : response.getItems()) {
+                        PfWomenChildrenInf childRecord = mapToEntity(
+                            item,
+                            request
+                        );
+                        childrenRepository.save(childRecord);
+                    }
+                }
+
+                request.setStatus(MinyustFamilyStatus.COMPLETED);
+                request.setRequestDate(LocalDateTime.now());
+                request.setDataIn(response.toString());
+
+                if (
+                    response.getItems() != null &&
+                    !response.getItems().isEmpty()
+                ) {
+                    currentExchangeChildren = response
+                        .getItems()
+                        .stream()
+                        .filter(
+                            member ->
+                                member.getM_pnfl() != null &&
+                                member.getM_pnfl().equals(request.getPinpp())
+                        )
+                        .map(MinyustFamilyItemDto::getPnfl)
+                        .toList();
+                    currentSavedChildren = minyustFamilyInfRepository
+                        .getLatestMinyustByPinpp(request.getPinpp())
+                        .orElse(null);
+
+                    if (currentSavedChildren == null) {
+                        request.setStatus(MinyustFamilyStatus.NOT_FOUND);
+                    } else if (
+                        currentExchangeChildren.size() !=
+                            currentSavedChildren.size() ||
+                        !new HashSet<>(currentExchangeChildren).containsAll(
+                            currentSavedChildren
+                        )
+                    ) {
+                        request.setStatus(MinyustFamilyStatus.DIFFERENT);
+                    }
+                }
+            } else {
+                request.setStatus(MinyustFamilyStatus.FAILED);
+                request.setRequestDate(LocalDateTime.now());
+                request.setDataErr(
+                    "Result code: " +
+                        response.getResult_code() +
+                        ", Message: " +
+                        response.getResult_message()
+                );
+            }
+
+            return ProcessingResult.success();
+        } catch (Exception e) {
+            log.error(
+                "Failed to process request {}: {}",
+                request.getId(),
+                e.getMessage()
+            );
+
+            request.setStatus(MinyustFamilyStatus.FAILED);
+            request.setDataErr(e.getMessage());
+            repository.save(request);
+
+            return ProcessingResult.failure(e.getMessage());
         }
+    }
+
+    @Override
+    public long getPendingCount() {
+        return repository.countUnprocessed();
     }
 
     private MinyustFamilyResponseDto callExternalService(
@@ -277,11 +318,6 @@ public class MinyustFamilyBatchRequestProcessorImpl
             .build();
     }
 
-    @Override
-    public long getPendingCount() {
-        return repository.countUnprocessed();
-    }
-
     private LocalDate parseDate(String dateString) {
         if (dateString == null || dateString.isEmpty()) {
             return DEFAULT_DATE;
@@ -320,5 +356,14 @@ public class MinyustFamilyBatchRequestProcessorImpl
             log.error("Failed to parse long value: {}", value, e);
             return DEFAULT_ID;
         }
+    }
+
+    private RestClient createRestClient() {
+        SimpleClientHttpRequestFactory factory =
+            new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(30_000);
+
+        return RestClient.builder().requestFactory(factory).build();
     }
 }

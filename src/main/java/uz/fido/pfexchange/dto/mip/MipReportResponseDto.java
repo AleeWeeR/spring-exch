@@ -1,6 +1,5 @@
 package uz.fido.pfexchange.dto.mip;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
@@ -21,7 +20,6 @@ public class MipReportResponseDto {
     private Long wsId;
     private String fio;
     private String sex;
-    @JsonProperty("b_date")
-    private String bDate;
+    private String b_date;
     private List<MipPensionDto> pension;
 }

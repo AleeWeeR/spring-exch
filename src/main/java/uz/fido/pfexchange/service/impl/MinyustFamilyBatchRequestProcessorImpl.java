@@ -24,6 +24,7 @@ import uz.fido.pfexchange.dto.minyust.MinyustFamilyResponseDto;
 import uz.fido.pfexchange.dto.minyust.ProcessingResult;
 import uz.fido.pfexchange.entity.minyust.PfWomen;
 import uz.fido.pfexchange.entity.minyust.PfWomenChildrenInf;
+import uz.fido.pfexchange.repository.CustomQueryRepository;
 import uz.fido.pfexchange.repository.minyust.PfExchangeMinyustFamilyInfRepository;
 import uz.fido.pfexchange.repository.minyust.PfWomenChildrenInfRepository;
 import uz.fido.pfexchange.repository.minyust.PfWomenRepository;
@@ -38,13 +39,31 @@ public class MinyustFamilyBatchRequestProcessorImpl
     implements MinyustFamilyBatchRequestProcessor {
 
     private final PfWomenRepository repository;
+    private final CustomQueryRepository customQueryRepository;
 
-    private final RateLimiter rateLimiter = RateLimiter.create(50.0);
+    private volatile RateLimiter rateLimiter = RateLimiter.create(50.0);
+    private final AtomicInteger consecutiveTimeouts = new AtomicInteger(0);
+    private final AtomicInteger consecutiveSuccesses = new AtomicInteger(0);
+    private static final double MIN_RATE = 5.0;
+    private static final double MAX_RATE = 50.0;
+    private static final double BACKOFF_MULTIPLIER = 0.5; // Reduce by 50%
+    private static final double RECOVERY_MULTIPLIER = 1.2; // Increase by 20%
+
     private final ExecutorService executorService = createExecutor();
     private final PfWomenChildrenInfRepository childrenRepository;
     private final PfExchangeMinyustFamilyInfRepository minyustFamilyInfRepository;
     private final RestClient restClient = createRestClient();
 
+    private enum CircuitState {
+        CLOSED,
+        OPEN,
+        HALF_OPEN,
+    }
+
+    private volatile CircuitState circuitState = CircuitState.CLOSED;
+    private volatile LocalDateTime circuitOpenedAt;
+    private static final long CIRCUIT_OPEN_DURATION_MS = 60_000; // 1 minute
+    private static final String PAY_STATUS_CODE = "05";
     private static final Integer DEFAULT_GENDER = 0;
     private static final Long DEFAULT_ID = 0L;
     private static final LocalDate DEFAULT_DATE = LocalDate.of(1900, 1, 1);
@@ -145,93 +164,156 @@ public class MinyustFamilyBatchRequestProcessorImpl
         List<String> currentExchangeChildren;
         List<String> currentSavedChildren;
 
-        try {
-            request.setStatus(MinyustFamilyStatus.PROCESSING);
-            repository.save(request);
-
-            rateLimiter.acquire();
-
-            MinyustFamilyResponseDto response = callExternalService(
-                MinyustFamilyRequestDto.builder()
-                    .ID(String.valueOf(id))
-                    .pnfl(request.getPinpp())
-                    .tin("20201210")
-                    .build()
-            );
-
-            if ("1".equals(response.getResult_code())) {
-                if (
-                    response.getItems() != null &&
-                    !response.getItems().isEmpty()
-                ) {
-                    for (MinyustFamilyItemDto item : response.getItems()) {
-                        PfWomenChildrenInf childRecord = mapToEntity(
-                            item,
-                            request
-                        );
-                        childrenRepository.save(childRecord);
-                    }
-                }
-
-                request.setStatus(MinyustFamilyStatus.COMPLETED);
-                request.setRequestDate(LocalDateTime.now());
-                request.setDataIn(response.toString());
-
-                if (
-                    response.getItems() != null &&
-                    !response.getItems().isEmpty()
-                ) {
-                    currentExchangeChildren = response
-                        .getItems()
-                        .stream()
-                        .filter(
-                            member ->
-                                member.getM_pnfl() != null &&
-                                member.getM_pnfl().equals(request.getPinpp())
-                        )
-                        .map(MinyustFamilyItemDto::getPnfl)
-                        .toList();
-                    currentSavedChildren = minyustFamilyInfRepository
-                        .getLatestMinyustByPinpp(request.getPinpp())
-                        .orElse(null);
-
-                    if (currentSavedChildren == null) {
-                        request.setStatus(MinyustFamilyStatus.NOT_FOUND);
-                    } else if (
-                        currentExchangeChildren.size() !=
-                            currentSavedChildren.size() ||
-                        !new HashSet<>(currentExchangeChildren).containsAll(
-                            currentSavedChildren
-                        )
-                    ) {
-                        request.setStatus(MinyustFamilyStatus.DIFFERENT);
-                    }
-                }
+        if (circuitState == CircuitState.OPEN) {
+            if (shouldAttemptRecovery()) {
+                circuitState = CircuitState.HALF_OPEN;
+                log.info("Circuit breaker entering HALF_OPEN state");
             } else {
-                request.setStatus(MinyustFamilyStatus.FAILED);
-                request.setRequestDate(LocalDateTime.now());
-                request.setDataErr(
-                    "Result code: " +
-                        response.getResult_code() +
-                        ", Message: " +
-                        response.getResult_message()
-                );
+                return ProcessingResult.failure("Circuit breaker is OPEN");
             }
-
-            return ProcessingResult.success();
-        } catch (Exception e) {
-            log.error(
-                "Failed to process request {}: {}",
-                request.getId(),
-                e.getMessage()
-            );
-
-            request.setStatus(MinyustFamilyStatus.FAILED);
-            request.setDataErr(e.getMessage());
-            repository.save(request);
-
-            return ProcessingResult.failure(e.getMessage());
         }
+
+        int maxRetries = 3;
+        int attempt = 0;
+        Exception lastException = null;
+
+        while (attempt < maxRetries) {
+            try {
+                request.setStatus(MinyustFamilyStatus.PROCESSING);
+                repository.save(request);
+
+                rateLimiter.acquire();
+
+                MinyustFamilyResponseDto response =
+                    callExternalServiceWithRetry(
+                        MinyustFamilyRequestDto.builder()
+                            .ID(String.valueOf(id))
+                            .pnfl(request.getPinpp())
+                            .tin("20201210")
+                            .build(),
+                        attempt
+                    );
+
+                // Success - handle rate limiter recovery
+                handleSuccess();
+
+                if ("1".equals(response.getResult_code())) {
+                    if (
+                        response.getItems() != null &&
+                        !response.getItems().isEmpty()
+                    ) {
+                        for (MinyustFamilyItemDto item : response.getItems()) {
+                            PfWomenChildrenInf childRecord = mapToEntity(
+                                item,
+                                request
+                            );
+                            childrenRepository.save(childRecord);
+                        }
+                    }
+
+                    request.setStatus(MinyustFamilyStatus.COMPLETED);
+                    request.setRequestDate(LocalDateTime.now());
+                    request.setDataIn(response.toString());
+
+                    if (
+                        response.getItems() != null &&
+                        !response.getItems().isEmpty()
+                    ) {
+                        currentExchangeChildren = response
+                            .getItems()
+                            .stream()
+                            .filter(
+                                member ->
+                                    member.getM_pnfl() != null &&
+                                    member
+                                        .getM_pnfl()
+                                        .equals(request.getPinpp())
+                            )
+                            .map(MinyustFamilyItemDto::getPnfl)
+                            .toList();
+                        currentSavedChildren = minyustFamilyInfRepository
+                            .getLatestMinyustByPinpp(request.getPinpp())
+                            .orElse(null);
+
+                        if (currentSavedChildren == null) {
+                            request.setStatus(MinyustFamilyStatus.NOT_FOUND);
+                        } else if (
+                            currentExchangeChildren.size() !=
+                                currentSavedChildren.size() ||
+                            !new HashSet<>(currentExchangeChildren).containsAll(
+                                currentSavedChildren
+                            )
+                        ) {
+                            request.setStatus(MinyustFamilyStatus.DIFFERENT);
+                            // customQueryRepository.updateApplicationPayStatusCode(
+                            //     request.getApplicationId(),
+                            //     PAY_STATUS_CODE
+                            // );
+                        }
+                    }
+                } else {
+                    request.setStatus(MinyustFamilyStatus.FAILED);
+                    request.setRequestDate(LocalDateTime.now());
+                    request.setDataErr(
+                        "Result code: " +
+                            response.getResult_code() +
+                            ", Message: " +
+                            response.getResult_message()
+                    );
+                }
+
+                return ProcessingResult.success();
+            } catch (ResourceAccessException e) {
+                lastException = e;
+                attempt++;
+
+                if (isTimeoutException(e)) {
+                    handleTimeout();
+
+                    if (attempt < maxRetries) {
+                        long backoffMs = calculateBackoff(attempt);
+                        log.warn(
+                            "Timeout on attempt {}/{} for request {}. Backing off for {}ms",
+                            attempt,
+                            maxRetries,
+                            request.getId(),
+                            backoffMs
+                        );
+                        try {
+                            Thread.sleep(backoffMs);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            log.error("Thread interrupted during backoff", ie);
+                            request.setStatus(MinyustFamilyStatus.FAILED);
+                            request.setDataErr("Processing interrupted");
+                            repository.save(request);
+                            return ProcessingResult.failure(
+                                "Thread interrupted"
+                            );
+                        }
+                    }
+                } else {
+                    // Non-timeout error, don't retry
+                    break;
+                }
+            } catch (Exception e) {
+                log.error(
+                    "Failed to process request {}: {}",
+                    request.getId(),
+                    e.getMessage()
+                );
+                request.setStatus(MinyustFamilyStatus.FAILED);
+                request.setDataErr(e.getMessage());
+                repository.save(request);
+                return ProcessingResult.failure(e.getMessage());
+            }
+        }
+        request.setStatus(MinyustFamilyStatus.FAILED);
+        request.setDataErr(
+            "Max retries exceeded: " + lastException.getMessage()
+        );
+        repository.save(request);
+        return ProcessingResult.failure("Max retries exceeded");
     }
 
     @Override
@@ -311,7 +393,7 @@ public class MinyustFamilyBatchRequestProcessorImpl
             .motherNameLatin(dto.getM_first_name())
             .motherPatronymLatin(dto.getM_patronym())
             .motherBirthDate(parseDate(dto.getM_birth_day()))
-            .createdBy(-1L)
+            .createdBy(1L)
             .creationDate(LocalDate.now())
             .isActive("Y")
             .isAlive(dto.getLive_status())
@@ -358,11 +440,156 @@ public class MinyustFamilyBatchRequestProcessorImpl
         }
     }
 
+    private void handleTimeout() {
+        int timeouts = consecutiveTimeouts.incrementAndGet();
+        consecutiveSuccesses.set(0);
+
+        double currentRate = rateLimiter.getRate();
+
+        // Open circuit breaker if too many consecutive timeouts
+        if (timeouts >= 10) {
+            circuitState = CircuitState.OPEN;
+            circuitOpenedAt = LocalDateTime.now();
+            log.error(
+                "Circuit breaker OPENED due to {} consecutive timeouts. " +
+                    "Pausing for {} seconds",
+                timeouts,
+                CIRCUIT_OPEN_DURATION_MS / 1000
+            );
+        }
+
+        // Reduce rate on every 3 consecutive timeouts
+        if (timeouts % 3 == 0 && currentRate > MIN_RATE) {
+            double newRate = Math.max(
+                MIN_RATE,
+                currentRate * BACKOFF_MULTIPLIER
+            );
+            rateLimiter = RateLimiter.create(newRate);
+
+            log.warn(
+                "Rate limit reduced: {} -> {} req/s (consecutive timeouts: {})",
+                String.format("%.2f", currentRate),
+                String.format("%.2f", newRate),
+                timeouts
+            );
+        }
+    }
+
+    private void handleSuccess() {
+        consecutiveTimeouts.set(0);
+        int successes = consecutiveSuccesses.incrementAndGet();
+
+        // Close circuit breaker if in HALF_OPEN and getting successes
+        if (circuitState == CircuitState.HALF_OPEN && successes >= 5) {
+            circuitState = CircuitState.CLOSED;
+            log.info("Circuit breaker CLOSED after successful recovery");
+        }
+
+        double currentRate = rateLimiter.getRate();
+
+        // Gradually increase rate after sustained success
+        if (successes % 50 == 0 && currentRate < MAX_RATE) {
+            double newRate = Math.min(
+                MAX_RATE,
+                currentRate * RECOVERY_MULTIPLIER
+            );
+            rateLimiter = RateLimiter.create(newRate);
+
+            log.info(
+                "Rate limit increased: {} -> {} req/s (consecutive successes: {})",
+                String.format("%.2f", currentRate),
+                String.format("%.2f", newRate),
+                successes
+            );
+        }
+    }
+
+    private boolean shouldAttemptRecovery() {
+        if (circuitOpenedAt == null) return false;
+
+        return LocalDateTime.now().isAfter(
+            circuitOpenedAt.plusNanos(CIRCUIT_OPEN_DURATION_MS * 1_000_000)
+        );
+    }
+
+    private long calculateBackoff(int attempt) {
+        // Exponential backoff: 1s, 2s, 4s, 8s...
+        long baseDelay = 1000L;
+        long exponentialDelay = baseDelay * (long) Math.pow(2, attempt - 1);
+
+        // Add jitter (0-25% random variation) to prevent thundering herd
+        long jitter = (long) (exponentialDelay * 0.25 * Math.random());
+
+        return Math.min(exponentialDelay + jitter, 30_000L); // Cap at 30s
+    }
+
+    private boolean isTimeoutException(Exception e) {
+        return (
+            e instanceof ResourceAccessException &&
+            (e.getCause() instanceof java.net.SocketTimeoutException ||
+                e.getMessage().contains("timeout") ||
+                e.getMessage().contains("timed out"))
+        );
+    }
+
+    private MinyustFamilyResponseDto callExternalServiceWithRetry(
+        MinyustFamilyRequestDto requestDto,
+        int attemptNumber
+    ) {
+        try {
+            log.info(
+                "Calling external service (attempt {}): {} with body: {}",
+                attemptNumber + 1,
+                URL,
+                requestDto
+            );
+
+            return restClient
+                .post()
+                .uri(URL)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(requestDto)
+                .retrieve()
+                .onStatus(
+                    status -> status.value() == 429, // Rate limit hit
+                    (request, response) -> {
+                        log.warn("Rate limit (429) received from server");
+                        handleTimeout(); // Treat 429 as timeout
+                        throw new ResourceAccessException(
+                            "Rate limit exceeded"
+                        );
+                    }
+                )
+                .onStatus(
+                    HttpStatusCode::is4xxClientError,
+                    (request, response) -> {
+                        log.error("4xx error: {}", response.getStatusCode());
+                        throw new IllegalArgumentException(
+                            "Client error: " + response.getStatusCode()
+                        );
+                    }
+                )
+                .onStatus(
+                    HttpStatusCode::is5xxServerError,
+                    (request, response) -> {
+                        log.error("5xx error: {}", response.getStatusCode());
+                        throw new IllegalStateException(
+                            "Server error: " + response.getStatusCode()
+                        );
+                    }
+                )
+                .body(MinyustFamilyResponseDto.class);
+        } catch (ResourceAccessException e) {
+            log.error("I/O error connecting to {}: {}", URL, e.getMessage());
+            throw e; // Re-throw to be handled by retry logic
+        }
+    }
+
     private RestClient createRestClient() {
         SimpleClientHttpRequestFactory factory =
             new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(5_000);
-        factory.setReadTimeout(30_000);
+        factory.setConnectTimeout(10_000); // Increased from 5s
+        factory.setReadTimeout(45_000); // Increased from 30s
 
         return RestClient.builder().requestFactory(factory).build();
     }

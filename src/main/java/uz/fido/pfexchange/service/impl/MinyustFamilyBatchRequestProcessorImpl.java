@@ -68,7 +68,8 @@ public class MinyustFamilyBatchRequestProcessorImpl
     private static final Long DEFAULT_ID = 0L;
     private static final LocalDate DEFAULT_DATE = LocalDate.of(1900, 1, 1);
     DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
-    private static final String URL = "http://api.uz";
+    private static final String URL =
+        "http://10.190.24.138:96/api/ZagsToMinFin/GetFamily";
 
     private ExecutorService createExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

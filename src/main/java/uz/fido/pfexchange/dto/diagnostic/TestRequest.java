@@ -15,6 +15,7 @@ import lombok.Setter;
 @AllArgsConstructor
 public class TestRequest {
     private String url;
+    @Builder.Default
     private String method = "GET";
     private Map<String, String> headers;
     private String body;

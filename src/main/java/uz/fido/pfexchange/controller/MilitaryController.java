@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import jakarta.validation.Valid;
 import uz.fido.pfexchange.dto.ResponseWrapperDto;
 import uz.fido.pfexchange.dto.military.MilitaryRequestDto;
 import uz.fido.pfexchange.dto.military.MilitaryResponseDto;
@@ -26,7 +28,7 @@ public class MilitaryController {
         }
     )
     public ResponseEntity<ResponseWrapperDto<MilitaryResponseDto>> sendRequest(
-        @RequestBody MilitaryRequestDto requestDto
+        @Valid @RequestBody MilitaryRequestDto requestDto
     ) {
         return ResponseBuilder.ok(militaryService.sendRequest(requestDto));
     }

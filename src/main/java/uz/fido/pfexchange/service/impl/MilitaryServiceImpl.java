@@ -26,7 +26,7 @@ public class MilitaryServiceImpl implements MilitaryService {
     private final CustomQueryRepository customQueryRepository;
     private final RestClient restClient = RestClient.create();
     private final String URL =
-        "http://172.17.1.180:7001/pf/pf/mip/sendPensionerForCheck.jsp";
+        "https://apimgw.egov.uz:8243/mudofaa/millitary/info/v1";
 
     @Override
     public MilitaryResponseDto sendRequest(MilitaryRequestDto requestDto) {
@@ -50,8 +50,8 @@ public class MilitaryServiceImpl implements MilitaryService {
                 .post()
                 .uri(URL)
                 .contentType(MediaType.APPLICATION_JSON)
-                // .header("Authorization", "Bearer " + token)
-                .body(tempBody(requestDto))
+                .header("Authorization", "Bearer " + token)
+                .body(requestDto)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, (req, response) -> {
                     int statusCode = response.getStatusCode().value();
@@ -94,11 +94,29 @@ public class MilitaryServiceImpl implements MilitaryService {
                 })
                 .body(MilitaryResponseDto.class);
         } catch (ResourceAccessException e) {
-            log.error("Connection error to {}: {}", URL, e.getMessage(), e);
+            // Enhanced logging
+            log.error("Connection error to {}: {}", URL, e.getMessage());
+            log.error("Root cause: ", e.getCause());
+
+            // Check for specific causes
+            Throwable rootCause = e.getRootCause();
+            if (rootCause != null) {
+                log.error(
+                    "Root cause type: {}",
+                    rootCause.getClass().getName()
+                );
+                log.error("Root cause message: {}", rootCause.getMessage());
+            }
+
             throw RestException.restThrow(
                 ResponseWrapperDto.<Void>builder()
                     .code(503)
-                    .message("Failed to connect to military service")
+                    .message(
+                        "Failed to connect to military service: " +
+                            (rootCause != null
+                                ? rootCause.getMessage()
+                                : "Unknown error")
+                    )
                     .build(),
                 HttpStatus.SERVICE_UNAVAILABLE
             );
@@ -111,48 +129,5 @@ public class MilitaryServiceImpl implements MilitaryService {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private String tempBody(MilitaryRequestDto requestDto) {
-        return (
-            "{" +
-            "\"access_token\": {}," +
-            "\"end_point_address\": \"https://apimgw.egov.uz:8243/mudofaa/millitary/info/v1\"," +
-            "\"is_old\": \"true\"," +
-            "\"protocol\": \"https\"," +
-            "\"method\": \"POST\"," +
-            "\"do_output\": \"true\"," +
-            "\"content_type\": \"application/json\"," +
-            "\"authorization\": \"Bearer\"," +
-            "\"body_type\": \"json\"," +
-            "\"data_body\": {" +
-            "\"pin\": \"" +
-            escapeJson(requestDto.getPin()) +
-            "\"," +
-            "\"sender_pin\": \"" +
-            escapeJson(requestDto.getSenderPin()) +
-            "\"," +
-            "\"transaction_id\": " +
-            requestDto.getTransactionId() +
-            "," +
-            "\"purpose\": \"" +
-            escapeJson(requestDto.getPurpose()) +
-            "\"," +
-            "\"consent\": \"" +
-            escapeJson(requestDto.getConsent()) +
-            "\"" +
-            "}" +
-            "}"
-        );
-    }
-
-    private String escapeJson(String value) {
-        if (value == null) return "";
-        return value
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
     }
 }

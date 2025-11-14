@@ -38,8 +38,8 @@ public class ChargeRequestDto {
             maxLength = 14
     )
     @NotNull(message = "pinfl - majburiy parametr (bo'sh bo'lmasligi kerak)")
-    @Size(min = 14, max = 14, message = "pinfl - 14 ta raqamdan iborat bo'lishi kerak")
-    @Pattern(regexp = "^\\d{14}$", message = "pinfl - faqat raqamlardan iborat bo'lishi kerak")
+    @Size(min = 14, max = 14, message = "pinfl - faqat 14 ta raqamdan iborat bo'lishi kerak")
+    @Pattern(regexp = "^\\d{14}$", message = "pinfl - faqat 14 ta raqamlardan iborat bo'lishi kerak harflar mumkin emas")
     @JsonProperty("pinfl")
     private String pinfl;
 }

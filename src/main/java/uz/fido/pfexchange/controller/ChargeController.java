@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import uz.fido.pfexchange.dto.mip.ChargeHistoryResponseDto;
@@ -40,6 +41,7 @@ public class ChargeController {
      * @return Joriy qarzdorlik holati va tafsilotlari bilan ma'lumot
      */
     @PostMapping("/info")
+    @PreAuthorize(value = "hasAnyAuthority('GET_CHARGE_INFO')")
     @Operation(
             summary = "Qarzdorlik ma'lumotini olish",
             description = "Shaxsning faol qarzdorligi mavjudligini tekshiradi. Joriy qarz balansini va tafsilotlarini qaytaradi."
@@ -76,6 +78,7 @@ public class ChargeController {
      * @return Davr bo'yicha ushlab qolish tafsilotlari bilan qarzdorlik tarixi
      */
     @PostMapping("/history")
+    @PreAuthorize(value = "hasAnyAuthority('GET_CHARGE_HIST')")
     @Operation(
             summary = "Qarzdorlik tarixini olish",
             description = "Shaxsning qarzdorlik/ushlab qolish tarixini davr tafsilotlari va to'lov ma'lumotlari bilan olish."

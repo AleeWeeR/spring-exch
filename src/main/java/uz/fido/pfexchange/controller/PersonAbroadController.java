@@ -13,12 +13,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import uz.fido.pfexchange.dto.mip.WsIdStatusRequestDto;
-import uz.fido.pfexchange.dto.mip.WsIdStatusResponseDto;
-import uz.fido.pfexchange.service.WsIdStatusService;
+import uz.fido.pfexchange.dto.mip.PersonAbroadStatusRequestDto;
+import uz.fido.pfexchange.dto.mip.PersonAbroadStatusResponseDto;
+import uz.fido.pfexchange.service.PersonAbroadService;
 
 /**
- * REST Controller for WS ID pensioner status operations
+ * REST Controller for person abroad status operations
  * Pensiya oluvchilar holatini tekshirish uchun REST kontroller
  *
  * Natija kodlari:
@@ -29,13 +29,13 @@ import uz.fido.pfexchange.service.WsIdStatusService;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/ws-id")
+@RequestMapping("/api/v1/person-abroad")
 @RequiredArgsConstructor
 @Validated
-@Tag(name = "WS ID Holat Tekshiruvi", description = "Pensiya oluvchilar holatini tekshirish va faollashtirish API'lari")
-public class WsIdStatusController {
+@Tag(name = "Pensiya Oluvchi Holat Tekshiruvi", description = "Pensiya oluvchilar holatini tekshirish va faollashtirish API'lari")
+public class PersonAbroadController {
 
-    private final WsIdStatusService wsIdStatusService;
+    private final PersonAbroadService personAbroadService;
 
     /**
      * Pensiya oluvchining holatini tekshirish va kerak bo'lsa faollashtirish
@@ -44,7 +44,7 @@ public class WsIdStatusController {
      * @return Holat kodi va ma'lumotlar bilan javob
      */
     @PostMapping("/status")
-    @PreAuthorize(value = "hasAnyAuthority('GET_WS_ID_STATUS')")
+    @PreAuthorize(value = "hasAnyAuthority('GET_PERSON_ABROAD_STATUS')")
     @Operation(
             summary = "Pensiya oluvchi holatini tekshirish",
             description = "Shaxsning pensiya oluvchilar ro'yhatida mavjudligini tekshiradi va kerak bo'lsa faollashtiradi. " +
@@ -55,7 +55,7 @@ public class WsIdStatusController {
             @ApiResponse(
                     responseCode = "200",
                     description = "Holat ma'lumoti muvaffaqiyatli olindi",
-                    content = @Content(schema = @Schema(implementation = WsIdStatusResponseDto.class))
+                    content = @Content(schema = @Schema(implementation = PersonAbroadStatusResponseDto.class))
             ),
             @ApiResponse(
                     responseCode = "400",
@@ -66,13 +66,13 @@ public class WsIdStatusController {
                     description = "Ichki server xatosi"
             )
     })
-    public ResponseEntity<WsIdStatusResponseDto> checkStatus(@Valid @RequestBody WsIdStatusRequestDto request) {
+    public ResponseEntity<PersonAbroadStatusResponseDto> checkStatus(@Valid @RequestBody PersonAbroadStatusRequestDto request) {
         log.info("Holat tekshiruvi so'rovi qabul qilindi - ws_id: {}, pinfl: {}",
                 request.getData().getWsId(),
                 request.getData().getPinfl()
         );
 
-        WsIdStatusResponseDto response = wsIdStatusService.checkStatus(request);
+        PersonAbroadStatusResponseDto response = personAbroadService.checkStatus(request);
 
         log.info("Holat tekshiruvi yakunlandi - natija: {}, xabar: {}",
                 response.getResult(),
@@ -98,6 +98,6 @@ public class WsIdStatusController {
             )
     })
     public ResponseEntity<String> healthCheck() {
-        return ResponseEntity.ok("WS ID Holat Tekshiruvi API'si ishga tushgan va faol");
+        return ResponseEntity.ok("Person Abroad Holat Tekshiruvi API'si ishga tushgan va faol");
     }
 }

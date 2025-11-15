@@ -11,14 +11,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * WS ID status ma'lumotlari uchun DTO
- * Data DTO for WS ID status query
+ * Person abroad status ma'lumotlari uchun DTO
+ * Data DTO for person abroad status query
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Schema(description = "WS ID va PINFL ma'lumotlari")
-public class WsIdStatusDataDto {
+public class PersonAbroadStatusDataDto {
 
     @Schema(
             description = "Veb-servis identifikatori (musbat butun son)",

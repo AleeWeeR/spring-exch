@@ -9,8 +9,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * WS ID status javobi uchun DTO
- * Response DTO for WS ID status query
+ * Person abroad status javobi uchun DTO
+ * Response DTO for person abroad status query
  *
  * Natija kodlari:
  * 0 - Pensiya oluvchilar ro'yhatida mavjud emas
@@ -24,7 +24,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "Pensiya oluvchi holatini tekshirish javobi")
-public class WsIdStatusResponseDto {
+public class PersonAbroadStatusResponseDto {
 
     @Schema(
             description = "Natija kodi: 0=Ro'yhatda yo'q, 1=Ro'yhatda mavjud, 2=Faol xolatga keltirildi, 3=Kirganlik aniqlanmadi",

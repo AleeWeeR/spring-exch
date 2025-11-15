@@ -5,16 +5,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import uz.fido.pfexchange.dto.mip.WsIdStatusRequestDto;
-import uz.fido.pfexchange.dto.mip.WsIdStatusResponseDto;
-import uz.fido.pfexchange.repository.mip.WsIdStatusRepository;
-import uz.fido.pfexchange.service.WsIdStatusService;
+import uz.fido.pfexchange.dto.mip.PersonAbroadStatusRequestDto;
+import uz.fido.pfexchange.dto.mip.PersonAbroadStatusResponseDto;
+import uz.fido.pfexchange.repository.mip.PersonAbroadRepository;
+import uz.fido.pfexchange.service.PersonAbroadService;
 
 import java.util.Map;
 
 /**
  * Pensiya oluvchilar holati uchun servis implementatsiyasi
- * Service implementation for pension recipient status
+ * Service implementation for pension recipient abroad status
  *
  * This service orchestrates multiple repository calls to determine person status
  *
@@ -27,20 +27,20 @@ import java.util.Map;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class WsIdStatusServiceImpl implements WsIdStatusService {
+public class PersonAbroadServiceImpl implements PersonAbroadService {
 
-    private final WsIdStatusRepository repository;
+    private final PersonAbroadRepository repository;
     private final ObjectMapper objectMapper;
 
     @Override
-    public WsIdStatusResponseDto checkStatus(WsIdStatusRequestDto requestDto) {
+    public PersonAbroadStatusResponseDto checkStatus(PersonAbroadStatusRequestDto requestDto) {
         String pinfl = requestDto.getData().getPinfl();
         Long wsId = requestDto.getData().getWsId();
         String inputData = convertRequestToJson(requestDto);
 
         log.info("Checking pension recipient status for PINFL: {}, WS_ID: {}", pinfl, wsId);
 
-        WsIdStatusResponseDto response;
+        PersonAbroadStatusResponseDto response;
 
         try {
             // Step 1: Check if person is active
@@ -75,14 +75,14 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
     /**
      * Handle inactive person - check if they've arrived and restore if needed
      */
-    private WsIdStatusResponseDto handleInactivePerson(String pinfl, Long wsId, String inputData) {
+    private PersonAbroadStatusResponseDto handleInactivePerson(String pinfl, Long wsId, String inputData) {
         // Get person close status
         Map<String, Object> closeStatus = repository.getPersonCloseStatus(pinfl);
         Integer found = (Integer) closeStatus.get("RETURN");
 
         if (found == 0) {
             // Person data issue
-            WsIdStatusResponseDto response = buildResponse(
+            PersonAbroadStatusResponseDto response = buildResponse(
                 0,
                 "Pensiya oluvchilar ro'yhatida mavjud emas",
                 wsId,
@@ -101,7 +101,7 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
             return checkCitizenArrivalAndRestore(pinfl, wsId, inputData);
         } else {
             // Person inactive for other reasons
-            WsIdStatusResponseDto response = buildResponse(
+            PersonAbroadStatusResponseDto response = buildResponse(
                 3,
                 "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi",
                 wsId,
@@ -115,11 +115,11 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
     /**
      * Check if citizen has arrived and restore if yes
      */
-    private WsIdStatusResponseDto checkCitizenArrivalAndRestore(String pinfl, Long wsId, String inputData) {
+    private PersonAbroadStatusResponseDto checkCitizenArrivalAndRestore(String pinfl, Long wsId, String inputData) {
         // Get person ID and birth date
         Long personId = repository.getPersonIdByPinfl(pinfl);
         if (personId == null) {
-            WsIdStatusResponseDto response = buildResponse(
+            PersonAbroadStatusResponseDto response = buildResponse(
                 0,
                 "Pensiya oluvchilar ro'yhatida mavjud emas",
                 wsId,
@@ -144,13 +144,13 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
 
             if (restored == 1) {
                 // Successfully restored
-                WsIdStatusResponseDto response = buildResponse(2, "O'zgartirildi", wsId, null);
+                PersonAbroadStatusResponseDto response = buildResponse(2, "O'zgartirildi", wsId, null);
                 logRequest(wsId, pinfl, inputData, response);
                 log.info("Person {} successfully restored", pinfl);
                 return response;
             } else {
                 // Restore failed but person arrived
-                WsIdStatusResponseDto response = buildResponse(
+                PersonAbroadStatusResponseDto response = buildResponse(
                     2,
                     restoreMessage != null ? restoreMessage : "O'zgartirildi",
                     wsId,
@@ -161,7 +161,7 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
             }
         } else {
             // Citizen has NOT arrived
-            WsIdStatusResponseDto response = buildResponse(
+            PersonAbroadStatusResponseDto response = buildResponse(
                 3,
                 "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi",
                 wsId,
@@ -175,8 +175,8 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
     /**
      * Build response DTO
      */
-    private WsIdStatusResponseDto buildResponse(Integer result, String msg, Long wsId, Integer status) {
-        return WsIdStatusResponseDto.builder()
+    private PersonAbroadStatusResponseDto buildResponse(Integer result, String msg, Long wsId, Integer status) {
+        return PersonAbroadStatusResponseDto.builder()
             .result(result)
             .msg(msg)
             .wsId(wsId)
@@ -187,7 +187,7 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
     /**
      * Log the request to database
      */
-    private void logRequest(Long wsId, String pinfl, String inputData, WsIdStatusResponseDto response) {
+    private void logRequest(Long wsId, String pinfl, String inputData, PersonAbroadStatusResponseDto response) {
         try {
             repository.logStatusRequest(
                 wsId,
@@ -206,7 +206,7 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
     /**
      * Convert request to JSON string for logging
      */
-    private String convertRequestToJson(WsIdStatusRequestDto request) {
+    private String convertRequestToJson(PersonAbroadStatusRequestDto request) {
         try {
             return objectMapper.writeValueAsString(request);
         } catch (JsonProcessingException e) {

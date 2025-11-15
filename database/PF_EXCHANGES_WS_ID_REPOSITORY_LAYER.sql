@@ -1,4 +1,4 @@
--- Oracle Repository Layer for WS ID Status Check
+-- Oracle Repository Layer for Person Abroad Status Check
 -- Separates concerns: Repository functions for data access, Service layer in Java
 
 -- ============================================================================
@@ -114,7 +114,7 @@ END Pf_Person_Repository;
 -- ============================================================================
 -- PACKAGE 2: WS ID Status Repository - Individual Operations
 -- ============================================================================
-CREATE OR REPLACE PACKAGE Pf_Ws_Id_Status_Repository AS
+CREATE OR REPLACE PACKAGE Pf_Person_Abroad_Repository AS
 
     -- Check if citizen has arrived
     FUNCTION Check_Citizen_Arrival(
@@ -140,10 +140,10 @@ CREATE OR REPLACE PACKAGE Pf_Ws_Id_Status_Repository AS
         p_Status      IN NUMBER := NULL
     );
 
-END Pf_Ws_Id_Status_Repository;
+END Pf_Person_Abroad_Repository;
 /
 
-CREATE OR REPLACE PACKAGE BODY Pf_Ws_Id_Status_Repository AS
+CREATE OR REPLACE PACKAGE BODY Pf_Person_Abroad_Repository AS
 
     FUNCTION Check_Citizen_Arrival(
         p_Person_Id  IN NUMBER,
@@ -232,9 +232,9 @@ CREATE OR REPLACE PACKAGE BODY Pf_Ws_Id_Status_Repository AS
             DBMS_OUTPUT.PUT_LINE('Error logging request: ' || SQLERRM);
     END Log_Status_Request;
 
-END Pf_Ws_Id_Status_Repository;
+END Pf_Person_Abroad_Repository;
 /
 
 -- Grant permissions
 -- GRANT EXECUTE ON Pf_Person_Repository TO your_application_user;
--- GRANT EXECUTE ON Pf_Ws_Id_Status_Repository TO your_application_user;
+-- GRANT EXECUTE ON Pf_Person_Abroad_Repository TO your_application_user;

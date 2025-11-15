@@ -11,13 +11,13 @@ import org.springframework.jdbc.core.simple.SimpleJdbcCall;
 import org.springframework.stereotype.Repository;
 
 /**
- * Repository for WS ID status Oracle function calls
+ * Repository for person abroad status Oracle function calls
  * Uses separate repository-layer Oracle functions for better separation of concerns
  */
 @Slf4j
 @Repository
 @RequiredArgsConstructor
-public class WsIdStatusRepository {
+public class PersonAbroadRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -94,7 +94,7 @@ public class WsIdStatusRepository {
      * @return 1=arrived, 0=not arrived
      */
     public Map<String, Object> checkCitizenArrival(Long personId, String pinfl, java.sql.Date birthDate) {
-        final String CATALOG_NAME = "Pf_Ws_Id_Status_Repository";
+        final String CATALOG_NAME = "Pf_Person_Abroad_Repository";
         final String FUNCTION_NAME = "Check_Citizen_Arrival";
 
         try {
@@ -134,7 +134,7 @@ public class WsIdStatusRepository {
      * @return 1=success, 0=failed
      */
     public Map<String, Object> restoreArrivedPerson(Long personId) {
-        final String CATALOG_NAME = "Pf_Ws_Id_Status_Repository";
+        final String CATALOG_NAME = "Pf_Person_Abroad_Repository";
         final String FUNCTION_NAME = "Restore_Arrived_Person";
 
         try {
@@ -173,7 +173,7 @@ public class WsIdStatusRepository {
      */
     public void logStatusRequest(Long wsId, String pinfl, String inputData,
                                   Integer resultCode, String message, Integer status) {
-        final String CATALOG_NAME = "Pf_Ws_Id_Status_Repository";
+        final String CATALOG_NAME = "Pf_Person_Abroad_Repository";
         final String PROCEDURE_NAME = "Log_Status_Request";
 
         try {

@@ -4,7 +4,7 @@ This directory contains Oracle PL/SQL functions needed for the WS ID pensioner s
 
 ## Overview
 
-The `CHECK_PENSIONER_STATUS` function checks if a pension recipient exists in the database and verifies their citizenship arrival status.
+The `Check_Person_Status` function checks if a pension recipient exists in the database and verifies their citizenship arrival status using the existing `Pf_Person_Abroad.Citizen_Arrived` and `Restore_Person_Arrived` functions.
 
 ## Function Logic
 
@@ -24,94 +24,100 @@ The `CHECK_PENSIONER_STATUS` function checks if a pension recipient exists in th
 
 ## Installation
 
-### Option 1: Full Implementation (with HTTP call)
+### Step 1: Create the Request Log Table
 
 ```sql
 sqlplus username/password@database
+@CREATE_WS_ID_TABLE.sql
+```
+
+This creates the `Pf_Exchanges_Ws_Id_Status` table to track all status check requests.
+
+### Step 2: Install the Integrated Function (RECOMMENDED)
+
+```sql
+sqlplus username/password@database
+@PF_EXCHANGES_WS_ID_INTEGRATED.sql
+```
+
+**This is the recommended version** that integrates with your existing:
+- `Pf_Person_Abroad.Citizen_Arrived` function
+- `Restore_Person_Arrived` function
+- Follows the same pattern as `Get_Charged_Info`
+
+### Alternative Options
+
+**Option 1: Full Implementation (with HTTP call)**
+```sql
 @PF_EXCHANGES_WS_ID.sql
 ```
+Standalone version with HTTP call logic using `UTL_HTTP`.
 
-This version includes HTTP call logic using `UTL_HTTP` to call an external citizen arrival check API.
-
-**Requirements:**
-- `UTL_HTTP` package must be available
-- ACL (Access Control List) must be configured for network access:
-
+**Option 2: Simplified Implementation**
 ```sql
-BEGIN
-  DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE(
-    host => 'your-api-endpoint.com',
-    ace  => xs$ace_type(
-      privilege_list => xs$name_list('http'),
-      principal_name => 'YOUR_SCHEMA',
-      principal_type => xs_acl.ptype_db
-    )
-  );
-END;
-/
-```
-
-### Option 2: Simplified Implementation
-
-```sql
-sqlplus username/password@database
 @PF_EXCHANGES_WS_ID_SIMPLE.sql
 ```
-
-This version assumes you have a local table or function to check citizen arrival status.
+Version with local table checks.
 
 ## Database Schema Requirements
 
-### Tables Needed
+### Tables Required
 
-1. **Pension Recipients Table** (example name: `pf_pension_recipients`)
-   ```sql
-   CREATE TABLE pf_pension_recipients (
-       id NUMBER PRIMARY KEY,
-       pinfl VARCHAR2(14) NOT NULL,
-       is_active VARCHAR2(1) DEFAULT 'N',
-       last_updated DATE,
-       updated_by VARCHAR2(50),
-       -- other columns...
-       CONSTRAINT chk_active CHECK (is_active IN ('Y', 'N'))
-   );
+1. **Pf_Persons Table** (your existing table)
+   - Must have columns: `Person_Id`, `Pinpp`, `Person_Type`, `Close_Reason`, `Close_Date`, `Close_Desc`, `Birth_Date`
+   - Used to check if pension recipient exists and their status
 
-   CREATE INDEX idx_pinfl ON pf_pension_recipients(pinfl);
-   ```
+2. **Pf_Exchanges_Ws_Id_Status Table** (created by CREATE_WS_ID_TABLE.sql)
+   - Logs all status check requests
+   - Similar to `Pf_Exchanges_Ep_Charged_Info` table
 
-2. **Citizen Arrivals Table** (optional, for simplified version)
-   ```sql
-   CREATE TABLE citizen_arrivals (
-       id NUMBER PRIMARY KEY,
-       pinfl VARCHAR2(14) NOT NULL,
-       arrival_date DATE,
-       arrival_status VARCHAR2(20),
-       -- other columns...
-   );
+### Functions Required
 
-   CREATE INDEX idx_arrival_pinfl ON citizen_arrivals(pinfl);
-   ```
+The integrated version depends on these existing functions in your database:
 
-## Customization
+1. **Pf_Person_Abroad.Citizen_Arrived**
+   - Checks if a person has arrived back to Uzbekistan
+   - Returns 1 if arrived, 0 if not
 
-You need to customize the following in the SQL files:
+2. **Restore_Person_Arrived**
+   - Restores a person's pension when they return
+   - Activates the person in the system
 
-1. **Table Name**: Replace `pf_pension_recipients` with your actual pension recipients table name
-2. **Column Names**: Adjust `is_active`, `pinfl`, etc. to match your schema
-3. **Citizen Arrival Check**: Implement the logic to check if citizen has arrived:
-   - Option A: Call external REST API (see `PF_EXCHANGES_WS_ID.sql`)
-   - Option B: Query local table (see `PF_EXCHANGES_WS_ID_SIMPLE.sql`)
-   - Option C: Call another PL/SQL function
+## How It Works
 
-## API Endpoint Configuration
+The integrated function follows this logic:
 
-If using the full implementation with HTTP calls, update this line in `PF_EXCHANGES_WS_ID.sql`:
+1. **Parse XML Input**: Extracts `ws_id` and `pinfl` from XML
+2. **Look for Person**: Checks `Pf_Persons` table for matching `Pinpp`
+3. **Check Status**:
+   - If not found → Return code 0
+   - If found and active (no close reason/date) → Return code 1
+   - If found but closed → Check citizenship arrival
+4. **Citizenship Check**: Calls `Pf_Person_Abroad.Citizen_Arrived`
+   - If arrived → Call `Restore_Person_Arrived` → Return code 2
+   - If not arrived → Return code 3
+5. **Log Request**: Saves request/response to `Pf_Exchanges_Ws_Id_Status` table
+
+## Integration with Existing Functions
+
+The function uses your existing logic:
 
 ```sql
-v_url := 'http://your-api-endpoint/check-arrival?pinfl=' || p_Pinfl;
-```
+-- Checks if person is closed (abroad)
+IF R_Pf_Persons.Close_Reason IS NOT NULL
+   OR R_Pf_Persons.Close_Date IS NOT NULL
+   OR R_Pf_Persons.Close_Desc = '11' THEN
 
-Replace with your actual citizen arrival check endpoint.
+    -- Check if citizen has arrived
+    IF Pf_Person_Abroad.Citizen_Arrived(...) = 1 THEN
+        -- Restore person
+        Restore_Person_Arrived(...)
+        -- Return code 2
+    ELSE
+        -- Return code 3
+    END IF;
+END IF;
+```
 
 ## Testing
 
@@ -120,18 +126,42 @@ Test the function directly in SQL:
 ```sql
 DECLARE
     v_return_code NUMBER;
-    v_output_text CLOB;
+    v_output_data CLOB;
+    v_input_data VARCHAR2(4000);
 BEGIN
-    v_return_code := PF_EXCHANGES_WS_ID.CHECK_PENSIONER_STATUS(
-        p_Pinfl => '41006673910061',
-        p_Ws_Id => 77,
-        o_Out_Text => v_output_text
+    -- Build XML input
+    v_input_data := '<Data><ws_id>77</ws_id><pinfl>41006673910061</pinfl></Data>';
+
+    -- Call function
+    v_return_code := PF_EXCHANGES_WS_ID.Check_Person_Status(
+        O_Data => v_output_data,
+        P_Data => v_input_data
     );
 
     DBMS_OUTPUT.PUT_LINE('Return Code: ' || v_return_code);
-    DBMS_OUTPUT.PUT_LINE('JSON Output: ' || v_output_text);
+    DBMS_OUTPUT.PUT_LINE('JSON Output: ' || v_output_data);
 END;
 /
+```
+
+**Expected Output Examples:**
+
+```sql
+-- Person not found
+Return Code: 1
+JSON Output: {"result": 0, "msg": "Pensiya oluvchilar ro'yhatida mavjud emas", "ws_id": 77}
+
+-- Person found and active
+Return Code: 1
+JSON Output: {"result": 1, "msg": "", "ws_id": 77, "status": 1}
+
+-- Person restored (arrived)
+Return Code: 1
+JSON Output: {"result": 2, "msg": "O'zgartirildi", "ws_id": 77}
+
+-- Person not arrived
+Return Code: 1
+JSON Output: {"result": 3, "msg": "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi", "ws_id": 77, "status": 0}
 ```
 
 ## Permissions

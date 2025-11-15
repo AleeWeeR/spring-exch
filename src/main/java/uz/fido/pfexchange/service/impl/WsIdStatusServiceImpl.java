@@ -43,9 +43,10 @@ public class WsIdStatusServiceImpl implements WsIdStatusService {
         MipFunctionResultDto functionResult = wsIdStatusRepository
             .callCheckPensionerStatus(pinfl, wsId);
 
+        // Function returns 1 for success, 0 for error
         if (
             functionResult.getReturnCode() == null ||
-            functionResult.getReturnCode() != 200
+            functionResult.getReturnCode() == 0
         ) {
             log.error(
                 "Oracle function returned error code: {}",

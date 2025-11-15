@@ -25,6 +25,7 @@ public class WsIdStatusRepository {
 
     /**
      * Oracle funksiyasi: Pensiya oluvchining holatini tekshirish va faollashtirish
+     * Uses existing Pf_Person_Abroad.Citizen_Arrived and Restore_Person_Arrived functions
      *
      * @param pinfl Shaxsiy identifikatsiya raqami (14 xonali)
      * @param wsId Veb-servis identifikatori
@@ -33,10 +34,13 @@ public class WsIdStatusRepository {
     public MipFunctionResultDto callCheckPensionerStatus(String pinfl, Long wsId) {
         // Oracle paket va funksiya nomlari
         final String CATALOG_NAME = "PF_EXCHANGES_WS_ID";
-        final String FUNCTION_NAME = "CHECK_PENSIONER_STATUS";
+        final String FUNCTION_NAME = "CHECK_PERSON_STATUS";
         final String RETURN_KEY = "RETURN";
 
         try {
+            // Build XML input like the charge controller
+            String xmlInput = buildXmlInput(pinfl, wsId);
+
             SimpleJdbcCall jdbcCall = new SimpleJdbcCall(jdbcTemplate)
                 .withCatalogName(CATALOG_NAME)
                 .withFunctionName(FUNCTION_NAME)
@@ -44,27 +48,25 @@ public class WsIdStatusRepository {
                 .declareParameters(
                     // 1. Function Return Value
                     new SqlOutParameter(RETURN_KEY, Types.INTEGER),
-                    // 2. p_Pinfl (IN)
-                    new SqlParameter("p_Pinfl", Types.VARCHAR),
-                    // 3. p_Ws_Id (IN)
-                    new SqlParameter("p_Ws_Id", Types.BIGINT),
-                    // 4. o_Out_Text (OUT) - JSON javob
-                    new SqlOutParameter("o_Out_Text", Types.CLOB)
+                    // 2. O_Data (OUT) - JSON response
+                    new SqlOutParameter("O_Data", Types.CLOB),
+                    // 3. P_Data (IN) - XML input
+                    new SqlParameter("P_Data", Types.VARCHAR)
                 );
 
             Map<String, Object> result = jdbcCall.execute(
-                Map.of("p_Pinfl", pinfl, "p_Ws_Id", wsId)
+                Map.of("P_Data", xmlInput)
             );
 
             // Return kodini olish
             Integer returnValue = (Integer) result.get(RETURN_KEY);
 
             // CLOB dan JSON matnni olish
-            Clob clobData = (Clob) result.get("o_Out_Text");
+            Clob clobData = (Clob) result.get("O_Data");
             String jsonText = clobToString(clobData);
 
             log.info(
-                "Function CHECK_PENSIONER_STATUS executed. Return code: {}, JSON length: {}",
+                "Function CHECK_PERSON_STATUS executed. Return code: {}, JSON length: {}",
                 returnValue,
                 jsonText != null ? jsonText.length() : 0
             );
@@ -75,16 +77,26 @@ public class WsIdStatusRepository {
                 .build();
         } catch (Exception e) {
             log.error(
-                "Error calling CHECK_PENSIONER_STATUS function for PINFL: {}, WS_ID: {}",
+                "Error calling CHECK_PERSON_STATUS function for PINFL: {}, WS_ID: {}",
                 pinfl,
                 wsId,
                 e
             );
             throw new RuntimeException(
-                "Failed to call CHECK_PENSIONER_STATUS Oracle function",
+                "Failed to call CHECK_PERSON_STATUS Oracle function",
                 e
             );
         }
+    }
+
+    /**
+     * Build XML input matching the pattern from charge controller
+     */
+    private String buildXmlInput(String pinfl, Long wsId) {
+        return "<Data>" +
+               "<ws_id>" + wsId + "</ws_id>" +
+               "<pinfl>" + pinfl + "</pinfl>" +
+               "</Data>";
     }
 
     /**

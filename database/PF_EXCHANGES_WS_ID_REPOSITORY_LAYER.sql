@@ -1,5 +1,15 @@
 -- Oracle Repository Layer for Person Abroad Status Check
 -- Separates concerns: Repository functions for data access, Service layer in Java
+--
+-- TWO ENDPOINTS SUPPORTED:
+-- 1. /check-status - Read-only status check
+--    Response: {"result": 1, "msg": "", "ws_id": 77, "status": 1}
+--    - result: 1=success (200), 0=error
+--    - status: 1=faol, 2=nofaol(chet elda, close_desc=11), 3=nofaol(boshqa)
+--
+-- 2. /restore-status - Check arrival and restore if returned
+--    Response: {"result": 2, "msg": "O'zgartirildi", "ws_id": 77}
+--    - result: 0=not found, 1=already active, 2=restored, 3=not arrived
 
 -- ============================================================================
 -- PACKAGE 1: Person Repository - Data Access Layer
@@ -130,7 +140,9 @@ CREATE OR REPLACE PACKAGE Pf_Person_Abroad_Repository AS
         o_Message   OUT VARCHAR2
     ) RETURN NUMBER;  -- Returns: 1=success, 0=failed
 
-    -- Log status check request
+    -- Log status check/restore request
+    -- For check-status endpoint: p_Status should be 1/2/3
+    -- For restore-status endpoint: p_Status should be NULL
     PROCEDURE Log_Status_Request(
         p_Ws_Id       IN NUMBER,
         p_Pinfl       IN VARCHAR2,

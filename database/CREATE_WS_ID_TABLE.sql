@@ -26,13 +26,13 @@ CREATE INDEX Idx_Ws_Id_Status_Ws_Id ON Pf_Exchanges_Ws_Id_Status(Ws_Id);
 CREATE INDEX Idx_Ws_Id_Status_Date ON Pf_Exchanges_Ws_Id_Status(Creation_Date);
 
 -- Add comments
-COMMENT ON TABLE Pf_Exchanges_Ws_Id_Status IS 'WS ID pensioner status check request log';
+COMMENT ON TABLE Pf_Exchanges_Ws_Id_Status IS 'Person abroad status check and restore request log - supports two endpoints';
 COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Ws_Id_Status_Id IS 'Primary key';
 COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Ws_Id IS 'Web service ID from request';
 COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Pinpp IS 'PINFL from request';
-COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.In_Data IS 'Original request data (XML)';
-COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Result_Code IS 'Result code: 0=not found, 1=active, 2=activated, 3=not arrived';
-COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Msg IS 'Result message';
-COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Status IS 'Person status (1=active, 0=inactive)';
+COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.In_Data IS 'Original request data (JSON)';
+COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Result_Code IS 'Check-status: 1=success,0=error | Restore-status: 0=not found,1=already active,2=restored,3=not arrived';
+COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Msg IS 'Result message in Uzbek';
+COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Status IS 'Only for check-status: 1=faol,2=nofaol(chet elda),3=nofaol(boshqa) | NULL for restore-status';
 COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Data_Sqlerr IS 'Error details if any';
 COMMENT ON COLUMN Pf_Exchanges_Ws_Id_Status.Creation_Date IS 'Request timestamp';

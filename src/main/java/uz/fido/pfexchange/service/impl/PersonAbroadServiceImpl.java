@@ -2,6 +2,8 @@ package uz.fido.pfexchange.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.sql.Clob;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -11,11 +13,12 @@ import uz.fido.pfexchange.dto.mip.PersonAbroadStatusRequestDto;
 import uz.fido.pfexchange.repository.mip.PersonAbroadRepository;
 import uz.fido.pfexchange.service.PersonAbroadService;
 
-import java.util.Map;
-
 /**
  * Pensiya oluvchilar holati uchun servis implementatsiyasi
  * Service implementation for pension recipient abroad status
+ *
+ * This service calls PF_EXCHANGES_ABROAD package functions which handle
+ * all business logic and database logging internally.
  */
 @Slf4j
 @Service
@@ -28,227 +31,110 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
     /**
      * ENDPOINT 1: Just check status (no restoration)
      *
-     * Response format:
-     *   result: 1=success, 0=error
-     *   status: 1=faol, 2=nofaol(chet elda), 3=nofaol(boshqa)
+     * Calls PF_EXCHANGES_ABROAD.Check_Person_Status
+     * Returns JSON: {"result": 1, "msg": "", "ws_id": 77, "status": 1}
      */
     @Override
     public PersonAbroadCheckStatusResponseDto checkStatus(PersonAbroadStatusRequestDto requestDto) {
-        String pinfl = requestDto.getData().getPinfl();
         Long wsId = requestDto.getData().getWsId();
-        String inputData = convertRequestToJson(requestDto);
+        String pinfl = requestDto.getData().getPinfl();
 
         log.info("Checking person status (no restore) for PINFL: {}, WS_ID: {}", pinfl, wsId);
 
         try {
-            // Step 1: Check if person is active
-            Integer activeStatus = repository.isPersonActive(pinfl);
+            // Convert request to XML format (Oracle expects XML)
+            String xmlData = convertToXml(requestDto);
 
-            // Case: Person not found
-            if (activeStatus == -1) {
-                PersonAbroadCheckStatusResponseDto response = buildCheckResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId, null);
-                logCheckRequest(wsId, pinfl, inputData, response);
-                return response;
-            }
+            // Call Oracle function
+            Map<String, Object> result = repository.checkPersonStatus(xmlData);
 
-            // Case: Person found and active
-            if (activeStatus == 1) {
-                PersonAbroadCheckStatusResponseDto response = buildCheckResponse(1, "", wsId, 1);
-                logCheckRequest(wsId, pinfl, inputData, response);
-                return response;
-            }
+            // Parse JSON response from CLOB
+            Clob responseClob = (Clob) result.get("O_Data");
+            String jsonResponse = repository.clobToString(responseClob);
 
-            // Person is inactive - check WHY (close_desc)
-            Map<String, Object> closeStatus = repository.getPersonCloseStatus(pinfl);
-            String closeDesc = (String) closeStatus.get("o_Close_Desc");
+            log.debug("Oracle response JSON: {}", jsonResponse);
 
-            // Case: Inactive because abroad (close_desc=11)
-            if ("11".equals(closeDesc)) {
-                PersonAbroadCheckStatusResponseDto response = buildCheckResponse(1, "", wsId, 2);
-                logCheckRequest(wsId, pinfl, inputData, response);
-                return response;
-            }
+            // Parse JSON to DTO
+            PersonAbroadCheckStatusResponseDto response = objectMapper.readValue(
+                jsonResponse,
+                PersonAbroadCheckStatusResponseDto.class
+            );
 
-            // Case: Inactive for other reasons
-            PersonAbroadCheckStatusResponseDto response = buildCheckResponse(1, "", wsId, 3);
-            logCheckRequest(wsId, pinfl, inputData, response);
+            log.info("Check status completed - result: {}, status: {}", response.getResult(), response.getStatus());
+
             return response;
 
         } catch (Exception e) {
             log.error("Error checking status for PINFL: {}", pinfl, e);
-            PersonAbroadCheckStatusResponseDto response = buildCheckResponse(0, "Ma'lumotni qayta ishlashda xatolik", wsId, null);
-            logCheckRequest(wsId, pinfl, inputData, response);
-            throw new RuntimeException("Failed to check person status", e);
+            // Return error response
+            return PersonAbroadCheckStatusResponseDto.builder()
+                .result(0)
+                .msg("Ma'lumotni qayta ishlashda xatolik: " + e.getMessage())
+                .wsId(wsId)
+                .status(null)
+                .build();
         }
     }
 
     /**
      * ENDPOINT 2: Check arrival and restore if needed
      *
-     * Response result codes:
-     *   0 = Pensiya oluvchilar ro'yhatida mavjud emas
-     *   1 = Pensiya oluvchilar ro'yhatida mavjud
-     *   2 = Oluvchi statusi faol xolatga keltirildi
-     *   3 = O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi
+     * Calls PF_EXCHANGES_ABROAD.Restore_Person_Status
+     * Returns JSON: {"result": 2, "msg": "O'zgartirildi", "ws_id": 77}
      */
     @Override
     public PersonAbroadRestoreStatusResponseDto restoreStatus(PersonAbroadStatusRequestDto requestDto) {
-        String pinfl = requestDto.getData().getPinfl();
         Long wsId = requestDto.getData().getWsId();
-        String inputData = convertRequestToJson(requestDto);
+        String pinfl = requestDto.getData().getPinfl();
 
         log.info("Checking restore status for PINFL: {}, WS_ID: {}", pinfl, wsId);
 
         try {
-            // Step 1: Check if person exists
-            Integer activeStatus = repository.isPersonActive(pinfl);
+            // Convert request to XML format (Oracle expects XML)
+            String xmlData = convertToXml(requestDto);
 
-            // Case 0: Person not found
-            if (activeStatus == -1) {
-                PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId);
-                logRestoreRequest(wsId, pinfl, inputData, response);
-                return response;
-            }
+            // Call Oracle function
+            Map<String, Object> result = repository.restorePersonStatus(xmlData);
 
-            // Case 1: Person already active
-            if (activeStatus == 1) {
-                PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(1, "Pensiya oluvchilar ro'yhatida mavjud", wsId);
-                logRestoreRequest(wsId, pinfl, inputData, response);
-                return response;
-            }
+            // Parse JSON response from CLOB
+            Clob responseClob = (Clob) result.get("O_Data");
+            String jsonResponse = repository.clobToString(responseClob);
 
-            // Person is inactive - check if they can be restored
-            PersonAbroadRestoreStatusResponseDto response = checkCitizenArrivalAndRestore(pinfl, wsId, inputData);
+            log.debug("Oracle response JSON: {}", jsonResponse);
+
+            // Parse JSON to DTO
+            PersonAbroadRestoreStatusResponseDto response = objectMapper.readValue(
+                jsonResponse,
+                PersonAbroadRestoreStatusResponseDto.class
+            );
+
+            log.info("Restore status completed - result: {}, message: {}",
+                response.getResult(),
+                response.getMsg()
+            );
+
             return response;
 
         } catch (Exception e) {
             log.error("Error restoring status for PINFL: {}", pinfl, e);
-            PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(0, "Ma'lumotni qayta ishlashda xatolik", wsId);
-            logRestoreRequest(wsId, pinfl, inputData, response);
-            throw new RuntimeException("Failed to restore person status", e);
+            // Return error response
+            return PersonAbroadRestoreStatusResponseDto.builder()
+                .result(0)
+                .msg("Ma'lumotni qayta ishlashda xatolik: " + e.getMessage())
+                .wsId(wsId)
+                .build();
         }
     }
 
     /**
-     * Check if citizen has arrived and restore if yes
+     * Convert request DTO to XML format expected by Oracle
+     * Format: <Data><ws_id>77</ws_id><pinfl>41006673910061</pinfl></Data>
      */
-    private PersonAbroadRestoreStatusResponseDto checkCitizenArrivalAndRestore(String pinfl, Long wsId, String inputData) {
-        // Get person ID and birth date
-        Long personId = repository.getPersonIdByPinfl(pinfl);
-        if (personId == null) {
-            PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(
-                0,
-                "Pensiya oluvchilar ro'yhatida mavjud emas",
-                wsId
-            );
-            logRestoreRequest(wsId, pinfl, inputData, response);
-            return response;
-        }
-
-        java.sql.Date birthDate = repository.getPersonBirthDate(personId);
-
-        // Check if citizen has arrived
-        Map<String, Object> arrivalResult = repository.checkCitizenArrival(personId, pinfl, birthDate);
-        Integer arrived = (Integer) arrivalResult.get("RETURN");
-
-        if (arrived == 1) {
-            // Citizen has arrived - restore them
-            Map<String, Object> restoreResult = repository.restoreArrivedPerson(personId);
-            Integer restored = (Integer) restoreResult.get("RETURN");
-
-            if (restored == 1) {
-                // Successfully restored
-                PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(
-                    2,
-                    "Oluvchi statusi faol xolatga keltirildi",
-                    wsId
-                );
-                logRestoreRequest(wsId, pinfl, inputData, response);
-                log.info("Person {} successfully restored", pinfl);
-                return response;
-            }
-        }
-
-        // Citizen has NOT arrived
-        PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(
-            3,
-            "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi",
-            wsId
+    private String convertToXml(PersonAbroadStatusRequestDto requestDto) {
+        return String.format(
+            "<Data><ws_id>%d</ws_id><pinfl>%s</pinfl></Data>",
+            requestDto.getData().getWsId(),
+            requestDto.getData().getPinfl()
         );
-        logRestoreRequest(wsId, pinfl, inputData, response);
-        return response;
-    }
-
-    /**
-     * Build check status response DTO
-     */
-    private PersonAbroadCheckStatusResponseDto buildCheckResponse(Integer result, String msg, Long wsId, Integer status) {
-        return PersonAbroadCheckStatusResponseDto.builder()
-            .result(result)
-            .msg(msg)
-            .wsId(wsId)
-            .status(status)
-            .build();
-    }
-
-    /**
-     * Build restore status response DTO
-     */
-    private PersonAbroadRestoreStatusResponseDto buildRestoreResponse(Integer result, String msg, Long wsId) {
-        return PersonAbroadRestoreStatusResponseDto.builder()
-            .result(result)
-            .msg(msg)
-            .wsId(wsId)
-            .build();
-    }
-
-    /**
-     * Log the check status request to database
-     */
-    private void logCheckRequest(Long wsId, String pinfl, String inputData, PersonAbroadCheckStatusResponseDto response) {
-        try {
-            repository.logStatusRequest(
-                wsId,
-                pinfl,
-                inputData,
-                response.getResult(),
-                response.getMsg(),
-                response.getStatus()
-            );
-        } catch (Exception e) {
-            // Don't fail the main operation if logging fails
-            log.warn("Failed to log check request for PINFL: {}", pinfl, e);
-        }
-    }
-
-    /**
-     * Log the restore status request to database
-     */
-    private void logRestoreRequest(Long wsId, String pinfl, String inputData, PersonAbroadRestoreStatusResponseDto response) {
-        try {
-            repository.logStatusRequest(
-                wsId,
-                pinfl,
-                inputData,
-                response.getResult(),
-                response.getMsg(),
-                null
-            );
-        } catch (Exception e) {
-            // Don't fail the main operation if logging fails
-            log.warn("Failed to log restore request for PINFL: {}", pinfl, e);
-        }
-    }
-
-    /**
-     * Convert request to JSON string for logging
-     */
-    private String convertRequestToJson(PersonAbroadStatusRequestDto request) {
-        try {
-            return objectMapper.writeValueAsString(request);
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to convert request to JSON", e);
-            return null;
-        }
     }
 }

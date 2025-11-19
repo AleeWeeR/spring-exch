@@ -76,7 +76,7 @@ This implementation adds **TWO separate POST endpoints** for checking pension re
 | 2 | Successfully restored | "Oluvchi statusi faol xolatga keltirildi" |
 | 3 | Citizen not arrived | "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi" |
 
-## Architecture: Repository Layer Pattern
+## Architecture: Single Package Pattern
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -95,91 +95,104 @@ This implementation adds **TWO separate POST endpoints** for checking pension re
                ▼
 ┌─────────────────────────────────────────────────┐
 │ PersonAbroadServiceImpl                         │
-│  - Orchestrates repository calls                │
-│  - Builds appropriate responses                 │
-│  - Handles logging                              │
+│  - Converts JSON request to XML                 │
+│  - Calls Oracle functions                       │
+│  - Parses JSON response from CLOB               │
+│  - Maps to appropriate DTOs                     │
 └──────────────┬──────────────────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────────────────┐
 │ PersonAbroadRepository                          │
-│  - isPersonActive(pinfl)                        │
-│  - getPersonCloseStatus(pinfl)                  │
-│  - checkCitizenArrival(id, pinfl, birthDate)    │
-│  - restoreArrivedPerson(id)                     │
-│  - logStatusRequest(...)                        │
-│  - getPersonIdByPinfl(pinfl)                    │
-│  - getPersonBirthDate(id)                       │
+│  - checkPersonStatus(xmlData) → CLOB            │
+│  - restorePersonStatus(xmlData) → CLOB          │
+│  - clobToString(clob) → String                  │
 └──────────────┬──────────────────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────────────────┐
-│ Oracle Repository Layer                         │
-│  - Pf_Person_Repository (data access)           │
-│  - Pf_Person_Abroad_Repository (operations)     │
-└─────────────────────────────────────────────────┘
+│ Oracle: PF_EXCHANGES_ABROAD Package             │
+│  - Check_Person_Status(P_Data, O_Data)          │
+│  - Restore_Person_Status(P_Data, O_Data)        │
+│  - Ensure_Json_Element helpers                  │
+│  - All business logic & logging handled here    │
+└──────────────┬──────────────────────────────────┘
+               │
+               ├─→ Pf_Persons (check existence & status)
+               ├─→ Pf_Person_Abroad.Citizen_Arrived
+               ├─→ Restore_Person_Arrived
+               ├─→ Pf_Exchange_Person_Statuses (check logs)
+               └─→ Pf_Exchange_Restore_Statuses (restore logs)
 ```
 
-## Database Layer: Oracle Packages
+**Pattern:** Follows same architecture as `Get_Charges_Info` and `Get_Charged_Info`
 
-### Package 1: Pf_Person_Repository (Data Access)
+## Database Layer: Oracle Package
 
+### Package: PF_EXCHANGES_ABROAD
+
+Single package following the same pattern as existing `Get_Charges_Info` and `Get_Charged_Info` functions.
+
+**Function 1: Check_Person_Status** (for /check-status endpoint)
 ```sql
-FUNCTION Is_Person_Active(p_Pinfl IN VARCHAR2) RETURN NUMBER;
--- Returns: -1=not found, 0=inactive, 1=active
-
-FUNCTION Get_Person_Close_Status(
-    p_Pinfl IN VARCHAR2,
-    o_Close_Reason OUT VARCHAR2,
-    o_Close_Date OUT DATE,
-    o_Close_Desc OUT VARCHAR2
+FUNCTION Check_Person_Status(
+    O_Data OUT CLOB,    -- JSON response
+    P_Data IN VARCHAR2  -- XML request: <Data><ws_id>77</ws_id><pinfl>...</pinfl></Data>
 ) RETURN NUMBER;
--- Returns closure details
+-- Returns: 0=error, 1=success
+-- Response JSON: {"result": 1, "msg": "", "ws_id": 77, "status": 1}
+-- Logs to: Pf_Exchange_Person_Statuses table
 ```
 
-### Package 2: Pf_Person_Abroad_Repository (Operations)
+**Function 2: Restore_Person_Status** (for /restore-status endpoint)
+```sql
+FUNCTION Restore_Person_Status(
+    O_Data OUT CLOB,    -- JSON response
+    P_Data IN VARCHAR2  -- XML request: <Data><ws_id>77</ws_id><pinfl>...</pinfl></Data>
+) RETURN NUMBER;
+-- Returns: 0=error, 1=success
+-- Response JSON: {"result": 2, "msg": "O'zgartirildi", "ws_id": 77}
+-- Logs to: Pf_Exchange_Restore_Statuses table
+```
+
+**Key Features:**
+- Uses `Ensure_Json_Element` helper functions for safe JSON construction
+- XML input parsing via `Pf_Exchange_Online.Convert_To_Xml`
+- Nested `Finish_Request` function handles logging and response building
+- Integrates with existing `Pf_Person_Abroad.Citizen_Arrived` and `Restore_Person_Arrived`
+- Automatic logging to separate tables per endpoint type
+- Comprehensive error handling with `Data_Sqlerr` column
+
+## Database Tables: Two Separate Logging Tables
+
+### Table 1: Pf_Exchange_Person_Statuses (Check-Status Logs)
 
 ```sql
-FUNCTION Check_Citizen_Arrival(
-    p_Person_Id  IN NUMBER,
-    p_Pinfl      IN VARCHAR2,
-    p_Birth_Date IN DATE,
-    o_Message    OUT VARCHAR2
-) RETURN NUMBER;
--- Wraps existing Pf_Person_Abroad.Citizen_Arrived
--- Returns: 1=arrived, 0=not arrived
-
-FUNCTION Restore_Arrived_Person(
-    p_Person_Id IN NUMBER,
-    o_Message   OUT VARCHAR2
-) RETURN NUMBER;
--- Wraps existing Restore_Person_Arrived
--- Returns: 1=success, 0=failed
-
-PROCEDURE Log_Status_Request(
-    p_Ws_Id       IN NUMBER,
-    p_Pinfl       IN VARCHAR2,
-    p_In_Data     IN CLOB,
-    p_Result_Code IN NUMBER,
-    p_Msg         IN VARCHAR2,
-    p_Status      IN NUMBER := NULL  -- NULL for restore-status, 1/2/3 for check-status
+CREATE TABLE Pf_Exchange_Person_Statuses (
+    Person_Status_Id NUMBER PRIMARY KEY,
+    Ws_Id            NUMBER,
+    Pinpp            VARCHAR2(14),
+    In_Data          CLOB,              -- Request XML
+    Result_Code      NUMBER,            -- 1=success, 0=error
+    Msg              VARCHAR2(4000),    -- Error message if result=0
+    Status           NUMBER,            -- 1=faol, 2=nofaol(abroad), 3=nofaol(other)
+    Data_Sqlerr      VARCHAR2(4000),
+    Creation_Date    DATE DEFAULT SYSDATE
 );
--- Logs request to Pf_Exchanges_Ws_Id_Status table
 ```
 
-## Database Table: Pf_Exchanges_Ws_Id_Status
+### Table 2: Pf_Exchange_Restore_Statuses (Restore-Status Logs)
 
 ```sql
-CREATE TABLE Pf_Exchanges_Ws_Id_Status (
-    Ws_Id_Status_Id NUMBER PRIMARY KEY,
-    Ws_Id           NUMBER,
-    Pinpp           VARCHAR2(14),
-    In_Data         CLOB,              -- Request JSON
-    Result_Code     NUMBER,            -- Response result code
-    Msg             VARCHAR2(4000),    -- Response message
-    Status          NUMBER,            -- For check-status only (1/2/3), NULL for restore
-    Data_Sqlerr     VARCHAR2(4000),
-    Creation_Date   DATE DEFAULT SYSDATE
+CREATE TABLE Pf_Exchange_Restore_Statuses (
+    Restore_Status_Id NUMBER PRIMARY KEY,
+    Ws_Id             NUMBER,
+    Pinpp             VARCHAR2(14),
+    In_Data           CLOB,              -- Request XML
+    Result_Code       NUMBER,            -- 0/1/2/3
+    Msg               VARCHAR2(4000),    -- Uzbek message
+    Data_Sqlerr       VARCHAR2(4000),
+    Creation_Date     DATE DEFAULT SYSDATE
 );
 ```
 
@@ -207,11 +220,19 @@ CREATE TABLE Pf_Exchanges_Ws_Id_Status (
 
 ### Database Scripts
 
-1. `database/PF_EXCHANGES_WS_ID_REPOSITORY_LAYER.sql` - **MAIN PACKAGE** (use this)
-   - Pf_Person_Repository package
-   - Pf_Person_Abroad_Repository package
+1. **`database/PF_EXCHANGES_ABROAD.sql`** - Main package (use this)
+   - PF_EXCHANGES_ABROAD package with two functions
+   - Check_Person_Status function
+   - Restore_Person_Status function
+   - Ensure_Json_Element helper functions
+   - Follows same pattern as Get_Charges_Info
 
-2. `database/CREATE_WS_ID_TABLE.sql` - Request logging table
+2. **`database/CREATE_PERSON_STATUS_TABLES.sql`** - Two logging tables
+   - Pf_Exchange_Person_Statuses (check-status logs)
+   - Pf_Exchange_Restore_Statuses (restore-status logs)
+
+3. `database/PF_EXCHANGES_WS_ID_REPOSITORY_LAYER.sql` - **OLD** (repository layer pattern - not used)
+4. `database/CREATE_WS_ID_TABLE.sql` - **OLD** (single table - not used)
 
 ### Documentation
 - `IMPLEMENTATION_SUMMARY.md` - This file
@@ -228,20 +249,31 @@ CREATE TABLE Pf_Exchanges_Ws_Id_Status (
 - Check-status includes `status` field (1/2/3)
 - Restore-status does NOT include `status` field (only result codes 0/1/2/3)
 
-### 3. Repository Layer Pattern
-- **Reason**: Separation of concerns
-- Oracle functions handle only data access
-- Java service layer orchestrates business logic
-- Better testability and maintainability
+### 3. Single Package Pattern (Similar to Charges)
+- **Reason**: Consistency with existing codebase
+- Follows same pattern as `Get_Charges_Info` and `Get_Charged_Info`
+- All business logic in Oracle (better performance)
+- Java layer is thin - just calls functions and parses responses
+- Simpler architecture, easier to maintain
 
-### 4. Shared Request Format
+### 4. Two Separate Logging Tables
+- **Reason**: Different schemas per endpoint type
+- `Pf_Exchange_Person_Statuses` has `Status` column (1/2/3)
+- `Pf_Exchange_Restore_Statuses` does NOT have `Status` column
+- Cleaner separation, no nullable columns
+- Easier to query and analyze per operation type
+
+### 5. XML Input Format
+- **Reason**: Consistency with existing exchange functions
+- Oracle functions expect XML: `<Data><ws_id>77</ws_id><pinfl>...</pinfl></Data>`
+- Java service converts JSON request to XML before calling Oracle
+- Oracle returns JSON response in CLOB
+- Matches pattern used by `Get_Charges_Info`
+
+### 6. Shared Request Format (Java Layer)
 - **Reason**: Both endpoints accept same input
 - Single request DTO can be reused
-
-### 5. Database Logging Flexibility
-- **Reason**: Support both endpoint types
-- `Status` column is optional (NULL for restore-status)
-- `Result_Code` has different meanings per endpoint
+- Java receives JSON, converts to XML for Oracle
 
 ## Integration with Existing Code
 
@@ -308,15 +340,14 @@ Restore_Person_Arrived(
 -- Connect to database
 sqlplus username/password@database
 
--- Step 1: Create table for request logging
-@database/CREATE_WS_ID_TABLE.sql
+-- Step 1: Create two logging tables
+@database/CREATE_PERSON_STATUS_TABLES.sql
 
--- Step 2: Create repository layer packages
-@database/PF_EXCHANGES_WS_ID_REPOSITORY_LAYER.sql
+-- Step 2: Create PF_EXCHANGES_ABROAD package
+@database/PF_EXCHANGES_ABROAD.sql
 
 -- Step 3: Grant permissions
-GRANT EXECUTE ON Pf_Person_Repository TO your_app_user;
-GRANT EXECUTE ON Pf_Person_Abroad_Repository TO your_app_user;
+GRANT EXECUTE ON PF_EXCHANGES_ABROAD TO your_app_user;
 ```
 
 ### 2. Application Configuration
@@ -357,14 +388,16 @@ curl -X POST http://localhost:8080/api/v1/person-abroad/restore-status \
 
 ## Key Features
 
-1. **Separation of Concerns**: Repository pattern with clean layers
+1. **Consistent Pattern**: Follows same architecture as `Get_Charges_Info` and `Get_Charged_Info`
 2. **Two Distinct Operations**: Read-only check vs. check-and-restore
 3. **Different Permissions**: Separate security authorities per endpoint
-4. **Request Logging**: All requests logged to database table
+4. **Separate Logging**: Two dedicated tables for different operation types
 5. **Integration**: Uses existing `Citizen_Arrived` and `Restore_Person_Arrived` functions
 6. **Type Safety**: Separate response DTOs prevent field confusion
-7. **Error Handling**: Comprehensive error handling and logging
-8. **Validation**: Input validation for ws_id and pinfl
+7. **Error Handling**: Comprehensive error handling in both Oracle and Java
+8. **Validation**: Input validation for ws_id and pinfl in Oracle package
+9. **JSON Response**: Oracle builds JSON response using `Ensure_Json_Element` helpers
+10. **XML Request**: Consistent with existing exchange functions
 
 ## Git Branch
 
@@ -373,18 +406,33 @@ All changes committed to:
 claude/add-ws-id-post-controller-01X9kxBzCptWCx4NnUDVk4Kg
 ```
 
-## Naming Evolution
+## Implementation Evolution
 
 The implementation went through several iterations:
-1. **Initial**: WsIdStatus* (single endpoint)
-2. **Refactored**: PersonAbroad* (two separate endpoints)
-3. **Final**: Two separate response DTOs per endpoint type
+
+1. **Initial**: WsIdStatus* (single endpoint, monolithic Oracle function)
+2. **Second**: PersonAbroad* (two separate endpoints, repository layer pattern)
+   - Multiple Oracle packages (Pf_Person_Repository, Pf_Person_Abroad_Repository)
+   - Java orchestrates business logic
+   - Single logging table with optional Status column
+3. **Final**: Single Package Pattern (PF_EXCHANGES_ABROAD)
+   - Two main functions following `Get_Charges_Info` pattern
+   - Two separate response DTOs
+   - Two separate logging tables
+   - All business logic in Oracle
+   - Java layer is thin (convert XML, parse JSON)
 
 ## Next Steps
 
-1. Deploy Oracle packages to your database
-2. Add both security authorities to your configuration
+1. Deploy Oracle package to your database:
+   - Run `CREATE_PERSON_STATUS_TABLES.sql` to create both logging tables
+   - Run `PF_EXCHANGES_ABROAD.sql` to create the package
+2. Add both security authorities to your configuration:
+   - `GET_PERSON_ABROAD_STATUS` for check-status endpoint
+   - `RESTORE_PERSON_ABROAD_STATUS` for restore-status endpoint
 3. Test both endpoints with real data
-4. Monitor `Pf_Exchanges_Ws_Id_Status` table for request logs
-5. Verify different response formats work correctly
+4. Monitor both logging tables:
+   - `Pf_Exchange_Person_Statuses` for check-status requests
+   - `Pf_Exchange_Restore_Statuses` for restore-status requests
+5. Verify response formats match specifications
 6. Create pull request when ready for review

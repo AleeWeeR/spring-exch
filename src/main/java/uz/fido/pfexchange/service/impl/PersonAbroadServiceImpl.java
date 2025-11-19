@@ -15,14 +15,6 @@ import java.util.Map;
 /**
  * Pensiya oluvchilar holati uchun servis implementatsiyasi
  * Service implementation for pension recipient abroad status
- *
- * This service orchestrates multiple repository calls to determine person status
- *
- * Natija kodlari:
- * 0 - Pensiya oluvchilar ro'yhatida mavjud emas
- * 1 - Pensiya oluvchilar ro'yhatida mavjud
- * 2 - Oluvchi statusi faol xolatga keltirildi
- * 3 - O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi
  */
 @Slf4j
 @Service
@@ -32,13 +24,22 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
     private final PersonAbroadRepository repository;
     private final ObjectMapper objectMapper;
 
+    /**
+     * ENDPOINT 1: Just check status (no restoration)
+     *
+     * Returns:
+     * 0 - Not found
+     * 1 - Active
+     * 2 - Inactive (close_desc=11, abroad >3 months)
+     * 3 - Inactive (other close reasons)
+     */
     @Override
     public PersonAbroadStatusResponseDto checkStatus(PersonAbroadStatusRequestDto requestDto) {
         String pinfl = requestDto.getData().getPinfl();
         Long wsId = requestDto.getData().getWsId();
         String inputData = convertRequestToJson(requestDto);
 
-        log.info("Checking pension recipient status for PINFL: {}, WS_ID: {}", pinfl, wsId);
+        log.info("Checking person status (no restore) for PINFL: {}, WS_ID: {}", pinfl, wsId);
 
         PersonAbroadStatusResponseDto response;
 
@@ -46,22 +47,34 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
             // Step 1: Check if person is active
             Integer activeStatus = repository.isPersonActive(pinfl);
 
-            // Case 1: Person not found
+            // Case 0: Person not found
             if (activeStatus == -1) {
                 response = buildResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId, null);
                 logRequest(wsId, pinfl, inputData, response);
                 return response;
             }
 
-            // Case 2: Person found and active
+            // Case 1: Person found and active
             if (activeStatus == 1) {
                 response = buildResponse(1, "", wsId, 1);
                 logRequest(wsId, pinfl, inputData, response);
                 return response;
             }
 
-            // Case 3: Person found but inactive - check citizenship arrival
-            response = handleInactivePerson(pinfl, wsId, inputData);
+            // Person is inactive - check WHY (close_desc)
+            Map<String, Object> closeStatus = repository.getPersonCloseStatus(pinfl);
+            String closeDesc = (String) closeStatus.get("o_Close_Desc");
+
+            // Case 2: Inactive because abroad (close_desc=11)
+            if ("11".equals(closeDesc)) {
+                response = buildResponse(2, "", wsId, 0);
+                logRequest(wsId, pinfl, inputData, response);
+                return response;
+            }
+
+            // Case 3: Inactive for other reasons
+            response = buildResponse(3, "", wsId, 0);
+            logRequest(wsId, pinfl, inputData, response);
             return response;
 
         } catch (Exception e) {
@@ -73,42 +86,51 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
     }
 
     /**
-     * Handle inactive person - check if they've arrived and restore if needed
+     * ENDPOINT 2: Check arrival and restore if needed (only for close_desc=11)
+     *
+     * Returns:
+     * 0 - Not found
+     * 1 - Found and already active
+     * 2 - Person restored (was abroad, has returned)
+     * 3 - Person abroad, not yet returned
      */
-    private PersonAbroadStatusResponseDto handleInactivePerson(String pinfl, Long wsId, String inputData) {
-        // Get person close status
-        Map<String, Object> closeStatus = repository.getPersonCloseStatus(pinfl);
-        Integer found = (Integer) closeStatus.get("RETURN");
+    @Override
+    public PersonAbroadStatusResponseDto restoreStatus(PersonAbroadStatusRequestDto requestDto) {
+        String pinfl = requestDto.getData().getPinfl();
+        Long wsId = requestDto.getData().getWsId();
+        String inputData = convertRequestToJson(requestDto);
 
-        if (found == 0) {
-            // Person data issue
-            PersonAbroadStatusResponseDto response = buildResponse(
-                0,
-                "Pensiya oluvchilar ro'yhatida mavjud emas",
-                wsId,
-                null
-            );
-            logRequest(wsId, pinfl, inputData, response);
+        log.info("Checking restore status for PINFL: {}, WS_ID: {}", pinfl, wsId);
+
+        PersonAbroadStatusResponseDto response;
+
+        try {
+            // Step 1: Check if person exists
+            Integer activeStatus = repository.isPersonActive(pinfl);
+
+            // Case 0: Person not found
+            if (activeStatus == -1) {
+                response = buildResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId, null);
+                logRequest(wsId, pinfl, inputData, response);
+                return response;
+            }
+
+            // Case 1: Person already active
+            if (activeStatus == 1) {
+                response = buildResponse(1, "Pensiya oluvchilar ro'yhatida mavjud", wsId, 1);
+                logRequest(wsId, pinfl, inputData, response);
+                return response;
+            }
+
+            // Person is inactive - check if they can be restored
+            response = checkCitizenArrivalAndRestore(pinfl, wsId, inputData);
             return response;
-        }
 
-        String closeReason = (String) closeStatus.get("o_Close_Reason");
-        java.sql.Date closeDate = (java.sql.Date) closeStatus.get("o_Close_Date");
-        String closeDesc = (String) closeStatus.get("o_Close_Desc");
-
-        // Check if person is closed due to being abroad (like in your existing logic)
-        if (closeReason != null || closeDate != null || "11".equals(closeDesc)) {
-            return checkCitizenArrivalAndRestore(pinfl, wsId, inputData);
-        } else {
-            // Person inactive for other reasons
-            PersonAbroadStatusResponseDto response = buildResponse(
-                3,
-                "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi",
-                wsId,
-                0
-            );
+        } catch (Exception e) {
+            log.error("Error restoring status for PINFL: {}", pinfl, e);
+            response = buildResponse(0, "Ma'lumotni qayta ishlashda xatolik", wsId, null);
             logRequest(wsId, pinfl, inputData, response);
-            return response;
+            throw new RuntimeException("Failed to restore person status", e);
         }
     }
 
@@ -134,42 +156,35 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
         // Check if citizen has arrived
         Map<String, Object> arrivalResult = repository.checkCitizenArrival(personId, pinfl, birthDate);
         Integer arrived = (Integer) arrivalResult.get("RETURN");
-        String arrivalMessage = (String) arrivalResult.get("o_Message");
 
         if (arrived == 1) {
             // Citizen has arrived - restore them
             Map<String, Object> restoreResult = repository.restoreArrivedPerson(personId);
             Integer restored = (Integer) restoreResult.get("RETURN");
-            String restoreMessage = (String) restoreResult.get("o_Message");
 
             if (restored == 1) {
                 // Successfully restored
-                PersonAbroadStatusResponseDto response = buildResponse(2, "O'zgartirildi", wsId, null);
-                logRequest(wsId, pinfl, inputData, response);
-                log.info("Person {} successfully restored", pinfl);
-                return response;
-            } else {
-                // Restore failed but person arrived
                 PersonAbroadStatusResponseDto response = buildResponse(
                     2,
-                    restoreMessage != null ? restoreMessage : "O'zgartirildi",
+                    "Oluvchi statusi faol xolatga keltirildi",
                     wsId,
                     null
                 );
                 logRequest(wsId, pinfl, inputData, response);
+                log.info("Person {} successfully restored", pinfl);
                 return response;
             }
-        } else {
-            // Citizen has NOT arrived
-            PersonAbroadStatusResponseDto response = buildResponse(
-                3,
-                "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi",
-                wsId,
-                0
-            );
-            logRequest(wsId, pinfl, inputData, response);
-            return response;
         }
+
+        // Citizen has NOT arrived
+        PersonAbroadStatusResponseDto response = buildResponse(
+            3,
+            "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi",
+            wsId,
+            0
+        );
+        logRequest(wsId, pinfl, inputData, response);
+        return response;
     }
 
     /**

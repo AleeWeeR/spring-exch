@@ -21,11 +21,9 @@ import uz.fido.pfexchange.service.PersonAbroadService;
  * REST Controller for person abroad status operations
  * Pensiya oluvchilar holatini tekshirish uchun REST kontroller
  *
- * Natija kodlari:
- * 0 - Pensiya oluvchilar ro'yhatida mavjud emas
- * 1 - Pensiya oluvchilar ro'yhatida mavjud
- * 2 - Oluvchi statusi faol xolatga keltirildi
- * 3 - O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi
+ * TWO ENDPOINTS:
+ * 1. /check-status - Just check status (no restoration)
+ * 2. /restore-status - Check arrival and restore if needed
  */
 @Slf4j
 @RestController
@@ -38,18 +36,24 @@ public class PersonAbroadController {
     private final PersonAbroadService personAbroadService;
 
     /**
-     * Pensiya oluvchining holatini tekshirish va kerak bo'lsa faollashtirish
+     * ENDPOINT 1: Just check person status (no restoration)
+     *
+     * Natija kodlari:
+     * 0 - Pensiya oluvchilar ro'yhatida mavjud emas
+     * 1 - Faol (active)
+     * 2 - Nofaol, close_desc=11 (chet elda 3 oydan ortiq)
+     * 3 - Nofaol, boshqa sabablar bilan
      *
      * @param request ws_id va pinfl parametrlarini o'z ichiga olgan so'rov
      * @return Holat kodi va ma'lumotlar bilan javob
      */
-    @PostMapping("/status")
+    @PostMapping("/check-status")
     @PreAuthorize(value = "hasAnyAuthority('GET_PERSON_ABROAD_STATUS')")
     @Operation(
-            summary = "Pensiya oluvchi holatini tekshirish",
-            description = "Shaxsning pensiya oluvchilar ro'yhatida mavjudligini tekshiradi va kerak bo'lsa faollashtiradi. " +
+            summary = "Pensiya oluvchi holatini tekshirish (faollashtirishsiz)",
+            description = "Shaxsning pensiya oluvchilar ro'yhatida mavjudligini va holatini tekshiradi. " +
                     "Javobda natija kodi qaytariladi: " +
-                    "0=Ro'yhatda yo'q, 1=Ro'yhatda mavjud, 2=Faol xolatga keltirildi, 3=Kirganlik aniqlanmadi"
+                    "0=Ro'yhatda yo'q, 1=Faol, 2=Nofaol (chet elda), 3=Nofaol (boshqa sabablar)"
     )
     @ApiResponses(value = {
             @ApiResponse(
@@ -67,14 +71,62 @@ public class PersonAbroadController {
             )
     })
     public ResponseEntity<PersonAbroadStatusResponseDto> checkStatus(@Valid @RequestBody PersonAbroadStatusRequestDto request) {
-        log.info("Holat tekshiruvi so'rovi qabul qilindi - ws_id: {}, pinfl: {}",
+        log.info("Check status request received - ws_id: {}, pinfl: {}",
                 request.getData().getWsId(),
                 request.getData().getPinfl()
         );
 
         PersonAbroadStatusResponseDto response = personAbroadService.checkStatus(request);
 
-        log.info("Holat tekshiruvi yakunlandi - natija: {}, xabar: {}",
+        log.info("Check status completed - result: {}", response.getResult());
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * ENDPOINT 2: Check arrival and restore person if needed
+     *
+     * Natija kodlari:
+     * 0 - Pensiya oluvchilar ro'yhatida mavjud emas
+     * 1 - Pensiya oluvchilar ro'yhatida mavjud (already active)
+     * 2 - Oluvchi statusi faol xolatga keltirildi (restored)
+     * 3 - O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi
+     *
+     * @param request ws_id va pinfl parametrlarini o'z ichiga olgan so'rov
+     * @return Holat kodi va ma'lumotlar bilan javob
+     */
+    @PostMapping("/restore-status")
+    @PreAuthorize(value = "hasAnyAuthority('RESTORE_PERSON_ABROAD_STATUS')")
+    @Operation(
+            summary = "Pensiya oluvchi holatini tiklash",
+            description = "Chet elda bo'lgan shaxsning qaytib kelganligini tekshiradi va faollashtiradi. " +
+                    "Javobda natija kodi qaytariladi: " +
+                    "0=Ro'yhatda yo'q, 1=Faol, 2=Faol xolatga keltirildi, 3=Kirganlik aniqlanmadi"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Tiklash ma'lumoti muvaffaqiyatli olindi",
+                    content = @Content(schema = @Schema(implementation = PersonAbroadStatusResponseDto.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Noto'g'ri so'rov parametrlari (ws_id yoki pinfl xato)"
+            ),
+            @ApiResponse(
+                    responseCode = "500",
+                    description = "Ichki server xatosi"
+            )
+    })
+    public ResponseEntity<PersonAbroadStatusResponseDto> restoreStatus(@Valid @RequestBody PersonAbroadStatusRequestDto request) {
+        log.info("Restore status request received - ws_id: {}, pinfl: {}",
+                request.getData().getWsId(),
+                request.getData().getPinfl()
+        );
+
+        PersonAbroadStatusResponseDto response = personAbroadService.restoreStatus(request);
+
+        log.info("Restore status completed - result: {}, message: {}",
                 response.getResult(),
                 response.getMsg()
         );

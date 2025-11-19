@@ -13,8 +13,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import uz.fido.pfexchange.dto.mip.PersonAbroadCheckStatusResponseDto;
+import uz.fido.pfexchange.dto.mip.PersonAbroadRestoreStatusResponseDto;
 import uz.fido.pfexchange.dto.mip.PersonAbroadStatusRequestDto;
-import uz.fido.pfexchange.dto.mip.PersonAbroadStatusResponseDto;
 import uz.fido.pfexchange.service.PersonAbroadService;
 
 /**
@@ -59,7 +60,7 @@ public class PersonAbroadController {
             @ApiResponse(
                     responseCode = "200",
                     description = "Holat ma'lumoti muvaffaqiyatli olindi",
-                    content = @Content(schema = @Schema(implementation = PersonAbroadStatusResponseDto.class))
+                    content = @Content(schema = @Schema(implementation = PersonAbroadCheckStatusResponseDto.class))
             ),
             @ApiResponse(
                     responseCode = "400",
@@ -70,15 +71,15 @@ public class PersonAbroadController {
                     description = "Ichki server xatosi"
             )
     })
-    public ResponseEntity<PersonAbroadStatusResponseDto> checkStatus(@Valid @RequestBody PersonAbroadStatusRequestDto request) {
+    public ResponseEntity<PersonAbroadCheckStatusResponseDto> checkStatus(@Valid @RequestBody PersonAbroadStatusRequestDto request) {
         log.info("Check status request received - ws_id: {}, pinfl: {}",
                 request.getData().getWsId(),
                 request.getData().getPinfl()
         );
 
-        PersonAbroadStatusResponseDto response = personAbroadService.checkStatus(request);
+        PersonAbroadCheckStatusResponseDto response = personAbroadService.checkStatus(request);
 
-        log.info("Check status completed - result: {}", response.getResult());
+        log.info("Check status completed - result: {}, status: {}", response.getResult(), response.getStatus());
 
         return ResponseEntity.ok(response);
     }
@@ -107,7 +108,7 @@ public class PersonAbroadController {
             @ApiResponse(
                     responseCode = "200",
                     description = "Tiklash ma'lumoti muvaffaqiyatli olindi",
-                    content = @Content(schema = @Schema(implementation = PersonAbroadStatusResponseDto.class))
+                    content = @Content(schema = @Schema(implementation = PersonAbroadRestoreStatusResponseDto.class))
             ),
             @ApiResponse(
                     responseCode = "400",
@@ -118,13 +119,13 @@ public class PersonAbroadController {
                     description = "Ichki server xatosi"
             )
     })
-    public ResponseEntity<PersonAbroadStatusResponseDto> restoreStatus(@Valid @RequestBody PersonAbroadStatusRequestDto request) {
+    public ResponseEntity<PersonAbroadRestoreStatusResponseDto> restoreStatus(@Valid @RequestBody PersonAbroadStatusRequestDto request) {
         log.info("Restore status request received - ws_id: {}, pinfl: {}",
                 request.getData().getWsId(),
                 request.getData().getPinfl()
         );
 
-        PersonAbroadStatusResponseDto response = personAbroadService.restoreStatus(request);
+        PersonAbroadRestoreStatusResponseDto response = personAbroadService.restoreStatus(request);
 
         log.info("Restore status completed - result: {}, message: {}",
                 response.getResult(),

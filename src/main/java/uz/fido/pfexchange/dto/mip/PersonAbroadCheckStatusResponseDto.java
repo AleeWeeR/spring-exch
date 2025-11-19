@@ -1,6 +1,5 @@
 package uz.fido.pfexchange.dto.mip;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -9,25 +8,24 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Person abroad status javobi uchun DTO
- * Response DTO for person abroad status query
+ * Check status response DTO
+ * Response for /check-status endpoint
  *
- * Natija kodlari:
- * 0 - Pensiya oluvchilar ro'yhatida mavjud emas
- * 1 - Pensiya oluvchilar ro'yhatida mavjud
- * 2 - Oluvchi statusi faol xolatga keltirildi
- * 3 - O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi
+ * result: 1=success (200), 0=error
+ * status:
+ *   1 = faol (active)
+ *   2 = nofaol (close_desc=11, abroad)
+ *   3 = nofaol, Pensiya jamg'armasiga muroiaat qiling (other reasons)
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@JsonInclude(JsonInclude.Include.NON_NULL)
-@Schema(description = "Pensiya oluvchi holatini tekshirish javobi")
-public class PersonAbroadStatusResponseDto {
+@Schema(description = "Check status javobi")
+public class PersonAbroadCheckStatusResponseDto {
 
     @Schema(
-            description = "Natija kodi: 0=Ro'yhatda yo'q, 1=Ro'yhatda mavjud, 2=Faol xolatga keltirildi, 3=Kirganlik aniqlanmadi",
+            description = "Natija: 1=muvaffaqiyatli, 0=xatolik",
             example = "1",
             required = true
     )
@@ -36,7 +34,7 @@ public class PersonAbroadStatusResponseDto {
 
     @Schema(
             description = "Xabar matni",
-            example = "O'zgartirildi"
+            example = ""
     )
     @JsonProperty("msg")
     private String msg;
@@ -50,8 +48,9 @@ public class PersonAbroadStatusResponseDto {
     private Long wsId;
 
     @Schema(
-            description = "Oluvchi holati (1=faol, 0=nofaol)",
-            example = "1"
+            description = "Holat: 1=faol, 2=nofaol (chet elda), 3=nofaol (boshqa sabablar)",
+            example = "1",
+            required = true
     )
     @JsonProperty("status")
     private Integer status;

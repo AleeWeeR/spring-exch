@@ -5,8 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import uz.fido.pfexchange.dto.mip.PersonAbroadCheckStatusResponseDto;
+import uz.fido.pfexchange.dto.mip.PersonAbroadRestoreStatusResponseDto;
 import uz.fido.pfexchange.dto.mip.PersonAbroadStatusRequestDto;
-import uz.fido.pfexchange.dto.mip.PersonAbroadStatusResponseDto;
 import uz.fido.pfexchange.repository.mip.PersonAbroadRepository;
 import uz.fido.pfexchange.service.PersonAbroadService;
 
@@ -27,37 +28,33 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
     /**
      * ENDPOINT 1: Just check status (no restoration)
      *
-     * Returns:
-     * 0 - Not found
-     * 1 - Active
-     * 2 - Inactive (close_desc=11, abroad >3 months)
-     * 3 - Inactive (other close reasons)
+     * Response format:
+     *   result: 1=success, 0=error
+     *   status: 1=faol, 2=nofaol(chet elda), 3=nofaol(boshqa)
      */
     @Override
-    public PersonAbroadStatusResponseDto checkStatus(PersonAbroadStatusRequestDto requestDto) {
+    public PersonAbroadCheckStatusResponseDto checkStatus(PersonAbroadStatusRequestDto requestDto) {
         String pinfl = requestDto.getData().getPinfl();
         Long wsId = requestDto.getData().getWsId();
         String inputData = convertRequestToJson(requestDto);
 
         log.info("Checking person status (no restore) for PINFL: {}, WS_ID: {}", pinfl, wsId);
 
-        PersonAbroadStatusResponseDto response;
-
         try {
             // Step 1: Check if person is active
             Integer activeStatus = repository.isPersonActive(pinfl);
 
-            // Case 0: Person not found
+            // Case: Person not found
             if (activeStatus == -1) {
-                response = buildResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId, null);
-                logRequest(wsId, pinfl, inputData, response);
+                PersonAbroadCheckStatusResponseDto response = buildCheckResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId, null);
+                logCheckRequest(wsId, pinfl, inputData, response);
                 return response;
             }
 
-            // Case 1: Person found and active
+            // Case: Person found and active
             if (activeStatus == 1) {
-                response = buildResponse(1, "", wsId, 1);
-                logRequest(wsId, pinfl, inputData, response);
+                PersonAbroadCheckStatusResponseDto response = buildCheckResponse(1, "", wsId, 1);
+                logCheckRequest(wsId, pinfl, inputData, response);
                 return response;
             }
 
@@ -65,44 +62,42 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
             Map<String, Object> closeStatus = repository.getPersonCloseStatus(pinfl);
             String closeDesc = (String) closeStatus.get("o_Close_Desc");
 
-            // Case 2: Inactive because abroad (close_desc=11)
+            // Case: Inactive because abroad (close_desc=11)
             if ("11".equals(closeDesc)) {
-                response = buildResponse(2, "", wsId, 0);
-                logRequest(wsId, pinfl, inputData, response);
+                PersonAbroadCheckStatusResponseDto response = buildCheckResponse(1, "", wsId, 2);
+                logCheckRequest(wsId, pinfl, inputData, response);
                 return response;
             }
 
-            // Case 3: Inactive for other reasons
-            response = buildResponse(3, "", wsId, 0);
-            logRequest(wsId, pinfl, inputData, response);
+            // Case: Inactive for other reasons
+            PersonAbroadCheckStatusResponseDto response = buildCheckResponse(1, "", wsId, 3);
+            logCheckRequest(wsId, pinfl, inputData, response);
             return response;
 
         } catch (Exception e) {
             log.error("Error checking status for PINFL: {}", pinfl, e);
-            response = buildResponse(0, "Ma'lumotni qayta ishlashda xatolik", wsId, null);
-            logRequest(wsId, pinfl, inputData, response);
+            PersonAbroadCheckStatusResponseDto response = buildCheckResponse(0, "Ma'lumotni qayta ishlashda xatolik", wsId, null);
+            logCheckRequest(wsId, pinfl, inputData, response);
             throw new RuntimeException("Failed to check person status", e);
         }
     }
 
     /**
-     * ENDPOINT 2: Check arrival and restore if needed (only for close_desc=11)
+     * ENDPOINT 2: Check arrival and restore if needed
      *
-     * Returns:
-     * 0 - Not found
-     * 1 - Found and already active
-     * 2 - Person restored (was abroad, has returned)
-     * 3 - Person abroad, not yet returned
+     * Response result codes:
+     *   0 = Pensiya oluvchilar ro'yhatida mavjud emas
+     *   1 = Pensiya oluvchilar ro'yhatida mavjud
+     *   2 = Oluvchi statusi faol xolatga keltirildi
+     *   3 = O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi
      */
     @Override
-    public PersonAbroadStatusResponseDto restoreStatus(PersonAbroadStatusRequestDto requestDto) {
+    public PersonAbroadRestoreStatusResponseDto restoreStatus(PersonAbroadStatusRequestDto requestDto) {
         String pinfl = requestDto.getData().getPinfl();
         Long wsId = requestDto.getData().getWsId();
         String inputData = convertRequestToJson(requestDto);
 
         log.info("Checking restore status for PINFL: {}, WS_ID: {}", pinfl, wsId);
-
-        PersonAbroadStatusResponseDto response;
 
         try {
             // Step 1: Check if person exists
@@ -110,26 +105,26 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
 
             // Case 0: Person not found
             if (activeStatus == -1) {
-                response = buildResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId, null);
-                logRequest(wsId, pinfl, inputData, response);
+                PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(0, "Pensiya oluvchilar ro'yhatida mavjud emas", wsId);
+                logRestoreRequest(wsId, pinfl, inputData, response);
                 return response;
             }
 
             // Case 1: Person already active
             if (activeStatus == 1) {
-                response = buildResponse(1, "Pensiya oluvchilar ro'yhatida mavjud", wsId, 1);
-                logRequest(wsId, pinfl, inputData, response);
+                PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(1, "Pensiya oluvchilar ro'yhatida mavjud", wsId);
+                logRestoreRequest(wsId, pinfl, inputData, response);
                 return response;
             }
 
             // Person is inactive - check if they can be restored
-            response = checkCitizenArrivalAndRestore(pinfl, wsId, inputData);
+            PersonAbroadRestoreStatusResponseDto response = checkCitizenArrivalAndRestore(pinfl, wsId, inputData);
             return response;
 
         } catch (Exception e) {
             log.error("Error restoring status for PINFL: {}", pinfl, e);
-            response = buildResponse(0, "Ma'lumotni qayta ishlashda xatolik", wsId, null);
-            logRequest(wsId, pinfl, inputData, response);
+            PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(0, "Ma'lumotni qayta ishlashda xatolik", wsId);
+            logRestoreRequest(wsId, pinfl, inputData, response);
             throw new RuntimeException("Failed to restore person status", e);
         }
     }
@@ -137,17 +132,16 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
     /**
      * Check if citizen has arrived and restore if yes
      */
-    private PersonAbroadStatusResponseDto checkCitizenArrivalAndRestore(String pinfl, Long wsId, String inputData) {
+    private PersonAbroadRestoreStatusResponseDto checkCitizenArrivalAndRestore(String pinfl, Long wsId, String inputData) {
         // Get person ID and birth date
         Long personId = repository.getPersonIdByPinfl(pinfl);
         if (personId == null) {
-            PersonAbroadStatusResponseDto response = buildResponse(
+            PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(
                 0,
                 "Pensiya oluvchilar ro'yhatida mavjud emas",
-                wsId,
-                null
+                wsId
             );
-            logRequest(wsId, pinfl, inputData, response);
+            logRestoreRequest(wsId, pinfl, inputData, response);
             return response;
         }
 
@@ -164,34 +158,32 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
 
             if (restored == 1) {
                 // Successfully restored
-                PersonAbroadStatusResponseDto response = buildResponse(
+                PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(
                     2,
                     "Oluvchi statusi faol xolatga keltirildi",
-                    wsId,
-                    null
+                    wsId
                 );
-                logRequest(wsId, pinfl, inputData, response);
+                logRestoreRequest(wsId, pinfl, inputData, response);
                 log.info("Person {} successfully restored", pinfl);
                 return response;
             }
         }
 
         // Citizen has NOT arrived
-        PersonAbroadStatusResponseDto response = buildResponse(
+        PersonAbroadRestoreStatusResponseDto response = buildRestoreResponse(
             3,
             "O'zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi",
-            wsId,
-            0
+            wsId
         );
-        logRequest(wsId, pinfl, inputData, response);
+        logRestoreRequest(wsId, pinfl, inputData, response);
         return response;
     }
 
     /**
-     * Build response DTO
+     * Build check status response DTO
      */
-    private PersonAbroadStatusResponseDto buildResponse(Integer result, String msg, Long wsId, Integer status) {
-        return PersonAbroadStatusResponseDto.builder()
+    private PersonAbroadCheckStatusResponseDto buildCheckResponse(Integer result, String msg, Long wsId, Integer status) {
+        return PersonAbroadCheckStatusResponseDto.builder()
             .result(result)
             .msg(msg)
             .wsId(wsId)
@@ -200,9 +192,20 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
     }
 
     /**
-     * Log the request to database
+     * Build restore status response DTO
      */
-    private void logRequest(Long wsId, String pinfl, String inputData, PersonAbroadStatusResponseDto response) {
+    private PersonAbroadRestoreStatusResponseDto buildRestoreResponse(Integer result, String msg, Long wsId) {
+        return PersonAbroadRestoreStatusResponseDto.builder()
+            .result(result)
+            .msg(msg)
+            .wsId(wsId)
+            .build();
+    }
+
+    /**
+     * Log the check status request to database
+     */
+    private void logCheckRequest(Long wsId, String pinfl, String inputData, PersonAbroadCheckStatusResponseDto response) {
         try {
             repository.logStatusRequest(
                 wsId,
@@ -214,7 +217,26 @@ public class PersonAbroadServiceImpl implements PersonAbroadService {
             );
         } catch (Exception e) {
             // Don't fail the main operation if logging fails
-            log.warn("Failed to log request for PINFL: {}", pinfl, e);
+            log.warn("Failed to log check request for PINFL: {}", pinfl, e);
+        }
+    }
+
+    /**
+     * Log the restore status request to database
+     */
+    private void logRestoreRequest(Long wsId, String pinfl, String inputData, PersonAbroadRestoreStatusResponseDto response) {
+        try {
+            repository.logStatusRequest(
+                wsId,
+                pinfl,
+                inputData,
+                response.getResult(),
+                response.getMsg(),
+                null
+            );
+        } catch (Exception e) {
+            // Don't fail the main operation if logging fails
+            log.warn("Failed to log restore request for PINFL: {}", pinfl, e);
         }
     }
 

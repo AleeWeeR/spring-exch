@@ -237,7 +237,7 @@ class PersonAbroadControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @MockBean
+    @MockitoBean
     private PersonAbroadService personAbroadService;
 }
 ```
@@ -256,14 +256,16 @@ void testWithWrongAuthority() { ... }
 ## Mocking Strategy
 
 ### Service Tests
-- Mock **repository** layer
+- Mock **repository** layer using `@Mock`
 - Mock **ObjectMapper** for JSON parsing
 - Mock **CLOB** objects for Oracle responses
+- Use `@InjectMocks` to inject mocked dependencies
 
 ### Controller Tests
-- Mock **service** layer
+- Mock **service** layer using `@MockitoBean` (Spring Boot 3.4+ replacement for deprecated `@MockBean`)
 - Use **MockMvc** for HTTP request simulation
 - Use **@WithMockUser** for security context
+- Use **@WebMvcTest** for controller layer testing
 
 ## Test Data
 

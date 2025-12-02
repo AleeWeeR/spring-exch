@@ -1,0 +1,2333 @@
+Function Add_Registration(
+  p_Registration_Type  Pf_Rb_s_Types.Code%Type,                      -- Тип регистрации
+  p_Pinpp              Pf_Person_Reqs.Pinpp%Type,                    -- ПИНФЛ
+  p_Document           Pf_Person_Reqs.Document%Type,                 -- Серия и номер паспорта(из ответа ЭП)
+  p_Is_Guardian        Pf_Rb_Registration_Books.Is_Guardian%Type := '0',
+  p_face_resp          Varchar2:= Null
+) Return Core_Const.t_Cursor
+Is
+  v_Cursor         Core_Const.t_Cursor;
+  --
+  v_XML            Core_Type_Report;
+  v_Count_Row      Integer := 0;
+  v_Out_Text       Varchar2(32000);
+  v_Focus_Item     Varchar2(200);
+  v_Return         Number(15);
+  v_Sobes_Org_Id   Pf_Rb_Registration_Books.Sobes_Org_Id%Type := Core_Env.Get_Env('PF_ADMIN_ORG');
+  --
+  r_Pf_Person_Reqs           Pf_Person_Reqs%Rowtype;
+  r_Pf_Rb_Registration_Books Pf_Rb_Registration_Books%Rowtype;
+  V_Case_n                    Varchar2(20) := ' ';
+  v_close_reason              Varchar2(2) := ' ';
+  v_Dead_Cnt                  Integer := 0; 
+  --
+  v_Adr_Sobes                 Pf_Person_Addresses.Sobes_Org_Id%Type := Null;
+  
+  v_Post_Site_Id              Pf_Proactive_Vtek_Reg.Post_Site_Id%Type;
+  r_Pf_Exchange_Add_My_Gov    Pf_Exchange_Add_My_Gov%Rowtype;
+  r_Pf_Rb_Person_Addresses    Pf_Rb_Person_Addresses%Rowtype;
+Begin
+  
+  if p_Pinpp = '42010500060046' then
+    insert into core_dummy(str) values (p_Is_Guardian);
+    commit;
+  end if;
+
+  v_XML := Core_Type_Report();
+  --
+  r_Pf_Person_Reqs.Pinpp    := p_Pinpp;
+  r_Pf_Person_Reqs.Document := p_Document;
+  
+  v_Return := PF_EXCHANGE_ONLINE.Send_Pinpp(r_Pf_Person_Reqs, v_Out_Text, 'Y');
+
+  If v_Return = 0 Then
+    Core_Util.Throw_Error(v_Out_Text);
+  End If;
+
+  If r_Pf_Person_Reqs.Livestatus = '0' Then
+    Core_Xml_Util.Open_Tag(v_XML, 'response');
+     Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+     Core_Util.Add_Row(v_XML, '<outText>Получатель уже умер!</outText>');
+     Core_Xml_Util.Close_Tag(v_XML, 'response');
+     Rollback;
+     Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+     Return v_Cursor;
+  End If;
+  
+  Select Count(*) Into v_Dead_Cnt From Pf_Minyust_Deadpeople d Where d.person_pin = p_Pinpp;
+  If v_Dead_Cnt > 0 Then
+     Core_Xml_Util.Open_Tag(v_XML, 'response');
+     Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+     Core_Util.Add_Row(v_XML, '<outText>Получатель уже умер!!</outText>');
+     Core_Xml_Util.Close_Tag(v_XML, 'response');
+     Rollback;
+     Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+     Return v_Cursor;
+  End If;
+  
+  If p_Registration_Type = '50' And Trunc(Trunc(Months_Between(Sysdate, r_Pf_Person_Reqs.Birth_Date_Req)) / 12) >= 80 Then
+     Core_Xml_Util.Open_Tag(v_XML, 'response');
+     Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+     Core_Util.Add_Row(v_XML, '<outText>Возраст больше 80 лет!</outText>');
+     Core_Xml_Util.Close_Tag(v_XML, 'response');
+     Rollback;
+     Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+     Return v_Cursor;
+  End If;   
+  
+  -- 
+  /*if p_Registration_Type in ('01', '02') then 
+    begin
+       select case_number, close_reason
+         into V_Case_n, v_close_reason
+       from(
+             select a.case_number,
+                    a.close_reason, 
+                    row_number() over(order by a.last_update_date desc) rn
+               from pf_applications a, pf_person_reqs r
+              Where r.pinpp = p_Pinpp
+                and a.person_id = r.person_req_id
+                and a.application_type = p_Registration_Type
+           )  where rn = 1;
+    Exception When No_Data_Found Then
+      Null;
+    End;
+       If V_Case_n <> ' ' and v_close_reason <> '17' Then
+           Core_Util.Throw_Error('Существует личное дело с таким типом под номером '||V_Case_n || '. Измените тип регистрации');
+       End If;  
+ 
+  end if; */
+  -- Проверка на незакрытую регистрацию
+  v_Out_Text := Null;
+  Check_Exists_Reg(v_Out_Text, p_Registration_Type, p_Pinpp);
+  If v_Out_Text Is Not Null Then
+     Core_Xml_Util.Open_Tag(v_XML, 'response');
+     Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+     Core_Util.Add_Row(v_XML, '<outText>'||v_Out_Text||'</outText>');
+     Core_Xml_Util.Close_Tag(v_XML, 'response');
+     Rollback;
+     Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+     Return v_Cursor;
+  End If;
+
+  If p_Is_Guardian = 'N' Or p_Is_Guardian = '0' Then
+  -- Проверки по имеющимся заявлениям
+    Check_Exists_App(v_Out_Text, p_Registration_Type, p_Pinpp);
+    If v_Out_Text Is Not Null Then
+      Core_Util.Throw_Error(v_Out_Text);
+    End If;
+  End If;
+  If p_Registration_Type Not In ('07', '22', '23') Then  
+    Check_Get_Address(v_Out_Text, r_Pf_Person_Reqs, v_Sobes_Org_Id, v_Post_Site_Id);
+    If v_Out_Text Is Not Null Then
+      Core_Xml_Util.Open_Tag(v_XML, 'response');
+       Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+       Core_Util.Add_Row(v_XML, '<outText>'||v_Out_Text||'</outText>');
+       Core_Xml_Util.Close_Tag(v_XML, 'response');
+       Rollback;
+       Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+       Return v_Cursor;
+    End If;
+  End If;
+  -- Проверка справки ВТЭК
+  Check_Exists_Vtek(v_Out_Text, p_Registration_Type, p_Pinpp);
+  If v_Out_Text Is Not Null Then
+    Core_Util.Throw_Error(v_Out_Text);
+  End If;
+
+  r_Pf_Rb_Registration_Books.Registration_Id        := Pf_Rb_Registration_Books_Sq.Nextval;
+  r_Pf_Rb_Registration_Books.Registration_Type_Code := p_Registration_Type;
+  r_Pf_Rb_Registration_Books.Registration_Date      := Sysdate;
+  r_Pf_Rb_Registration_Books.Pinpp                  := p_Pinpp;
+  r_Pf_Rb_Registration_Books.Sobes_Org_Id           := v_Sobes_Org_Id;
+  r_Pf_Rb_Registration_Books.Status                 := '00';
+  r_Pf_Rb_Registration_Books.Inps                   := p_Pinpp;
+  r_Pf_Rb_Registration_Books.Is_Closed              := 'N';
+  r_Pf_Rb_Registration_Books.Created_By             := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Registration_Books.Creation_Date          := Sysdate;
+  r_Pf_Rb_Registration_Books.Last_Updated_By        := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Last_Update_Date       := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Change_Status_By       := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Change_Status_Date     := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Is_Guardian            := Case When p_Is_Guardian = 'Y' Then '1' Else '0' End;
+  
+  
+    Begin
+      Insert Into log_for_face_id(log_id,
+                                  form_type,
+                                  pinpp,
+                                  reg_id,
+                                  appl_id,
+                                  created_by,
+                                  creation_dare,
+                                  resp_face)
+                                  Values(log_for_face_id_sq.nextval,
+                                  'REG',
+                                  p_Pinpp,
+                                  r_Pf_Rb_Registration_Books.Registration_Id,
+                                  Null,
+                                  Core_Env.Get_Env('USER_ID'),
+                                  Sysdate,
+                                  p_face_resp);
+                                
+     Exception When Others Then 
+       Null;
+     End;
+                              
+
+  -- Прикрепляем персону к регистрации
+  r_Pf_Rb_Registration_Books.Person_Id := Add_PF_Person(v_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books);
+
+  If r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+    Core_Xml_Util.Open_Tag(v_XML, 'response');
+     Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+     Core_Util.Add_Row(v_XML, '<outText>'||v_Out_Text||'</outText>');
+     Core_Xml_Util.Close_Tag(v_XML, 'response');
+     Rollback;
+     Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+     Return v_Cursor;
+    --Core_Util.Throw_Error(v_Out_Text);
+  End If;
+  If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('07', '08', '13') And v_Out_Text Is Not Null Then
+     --
+     Begin
+        Select rr.sobes_org_id into v_Adr_Sobes
+      From (Select *
+             From Pf_Person_Addresses t
+             Where t.Person_Id = r_Pf_Rb_Registration_Books.Person_Id  
+             Order By t.Date_End Desc) rr
+      Where Rownum = 1;
+     Exception when No_data_found Then 
+       v_Adr_Sobes := 0;      
+     End;
+     -- 
+     If v_Adr_Sobes != r_Pf_Rb_Registration_Books.Sobes_Org_Id Then 
+     
+           Core_Xml_Util.Open_Tag(v_XML, 'response');
+           Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+           Core_Util.Add_Row(v_XML, '<outText>'||substr(v_Out_Text,0,120)||'</outText>');
+           Core_Xml_Util.Close_Tag(v_XML, 'response');
+           Rollback;
+           Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+           Return v_Cursor;
+     End If;      
+  End If;
+    
+   
+   begin
+     select a.case_number
+       into v_Case_n
+       from pf_applications a
+      Where a.person_id = r_Pf_Rb_Registration_Books.Person_Id
+        and a.status_code not in ('07', '08', '13')
+        and a.sobes_org_id = r_Pf_Rb_Registration_Books.Sobes_Org_Id
+        and rownum = 1;
+   Exception
+     When No_Data_Found Then
+       Null;
+   End;
+   If v_Case_n <> ' ' Then
+     v_Out_Text := 'Заявление не может быть сохранено, т.к. в данном личном деле есть не рассмотренное заявление.' || Core_Const.c_New_Line;
+     Core_Util.Throw_Error(v_Out_Text);
+   End If;
+              
+  
+  --
+  Select Nvl(Max(t.Org_Registration_Id),0) + 1 Into r_Pf_Rb_Registration_Books.Org_Registration_Id
+      From Pf_Rb_Registration_Books t 
+      Where t.Sobes_Org_Id = v_Sobes_Org_Id;
+      
+      
+      
+  Insert Into Pf_Rb_Registration_Books Values r_Pf_Rb_Registration_Books;
+  Commit;
+
+  -- Действия по визуальным настройкам
+  For I In (
+            Select t.Visual_Type_Code
+              From Pf_RB_S_Visual t 
+                Where t.Registration_Type_Code = r_Pf_Rb_Registration_Books.Registration_Type_Code)
+  Loop
+    -- Адрес
+    If I.Visual_Type_Code = 'ADDRESS' Then
+      /*If Add_RB_Address(v_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id) = 1 Then
+        Commit;
+      End If; */
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code <> '23' Then
+        Select * Into r_Pf_Exchange_Add_My_Gov From Pf_Exchange_Add_My_Gov d Where d.pinpp = r_Pf_Rb_Registration_Books.Pinpp;
+        
+        If Pf_One_Window.Get_00_Adress(v_Out_Text, v_Post_Site_Id, 
+                                     r_Pf_Rb_Person_Addresses) <> 0
+        Then
+          r_Pf_Rb_Person_Addresses.Registration_Id := r_Pf_Rb_Registration_Books.Registration_Id;
+          r_Pf_Rb_Person_Addresses.Address         := Case When r_Pf_Exchange_Add_My_Gov.Temp_Date_End > Sysdate Then r_Pf_Exchange_Add_My_Gov.Temp_Address_Text Else r_Pf_Exchange_Add_My_Gov.Perm_Address_Text End;
+          r_Pf_Rb_Person_Addresses.Date_End        := Case When r_Pf_Exchange_Add_My_Gov.Temp_Date_End > Sysdate Then last_day(r_Pf_Exchange_Add_My_Gov.Temp_Date_End) Else r_Pf_Exchange_Add_My_Gov.Perm_Date_End End;
+          
+          Insert Into Pf_Rb_Person_Addresses Values r_Pf_Rb_Person_Addresses;
+          Commit;
+        Else
+         -- Err_Recieve(v_Out_Text||'(Manzil)', 'адрес');
+         Core_Xml_Util.Open_Tag(v_XML, 'response');
+         Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+         Core_Util.Add_Row(v_XML, '<outText>'||v_Out_Text||'</outText>');
+         Core_Xml_Util.Close_Tag(v_XML, 'response');
+         Rollback;
+         Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+         Return v_Cursor;
+          
+        End If;
+        
+      Else
+        Begin
+            Select a.post_site_id Into v_Post_Site_Id From PF_ADDRESESS_23_TYPE_APP a Where a.organisation_id_tum = r_Pf_Rb_Registration_Books.Sobes_Org_Id;
+           If Pf_One_Window.Get_00_Adress(v_Out_Text, v_Post_Site_Id, 
+                                     r_Pf_Rb_Person_Addresses) <> 0
+            Then
+              r_Pf_Rb_Person_Addresses.Registration_Id := r_Pf_Rb_Registration_Books.Registration_Id;
+              
+              Insert Into Pf_Rb_Person_Addresses Values r_Pf_Rb_Person_Addresses;
+              Commit;
+            Else
+             -- Err_Recieve(v_Out_Text||'(Manzil)', 'адрес');
+             Core_Xml_Util.Open_Tag(v_XML, 'response');
+             Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+             Core_Util.Add_Row(v_XML, '<outText>'||v_Out_Text||'</outText>');
+             Core_Xml_Util.Close_Tag(v_XML, 'response');
+             Rollback;
+             Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+             Return v_Cursor;
+              
+            End If;
+        Exception When Others Then
+             Core_Xml_Util.Open_Tag(v_XML, 'response');
+             Core_Util.Add_Row(v_XML, '<status>ERR</status>');         
+             Core_Util.Add_Row(v_XML, '<outText>Bu tumanga 23 tur ariza ochish uchun manzil kiritilmagan</outText>');
+             Core_Xml_Util.Close_Tag(v_XML, 'response');
+             Rollback;
+             Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+             Return v_Cursor;
+        End;
+      End If;
+       
+        
+      
+      
+     
+      
+    End If;
+    --
+    If I.Visual_Type_Code = 'DOCUMENT' Then
+      -- Паспорт
+      If Add_RB_Documents(v_Out_Text, r_Pf_Rb_Registration_Books) = 1 Then
+        Commit;
+      End If;
+      -- Справка ВТЭК
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('16','18','26','28','29') Then
+        Null;
+      Elsif r_Pf_Rb_Registration_Books.Registration_Type_Code In ('01','03','07') Then
+        If Add_RB_Vtek_Doc01(v_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14', r_Pf_Rb_Registration_Books.Registration_Type_Code) = 1 Then
+          Commit;
+        End If;
+      Elsif r_Pf_Rb_Registration_Books.Registration_Type_Code In ('17') Then
+        If Add_RB_Vtek_Doc17(v_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      Elsif r_Pf_Rb_Registration_Books.Registration_Type_Code In ('19') Then
+        If Add_RB_Vtek_Doc19(v_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      Elsif r_Pf_Rb_Registration_Books.Registration_Type_Code In ('15') Then
+        If Add_RB_Vtek_Doc15(v_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      Else
+        If Add_RB_Vtek_Doc(v_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      End If;
+      -- Свидетельство о браке
+      If Add_RB_Marriage(v_Out_Text, r_Pf_Rb_Registration_Books, p_Pinpp, p_Document) = 1 Then
+        Commit;
+      End If;
+      -- Свидетельство о разводе
+      If Add_RB_Divorce(v_Out_Text, r_Pf_Rb_Registration_Books, p_Pinpp) = 1 Then
+        Commit;
+      End If;
+      -- Иждевенцы, кормильцы
+      If p_Registration_Type In ('03') Then
+        If Pf_Reg_Books_2.Information_Exchange(v_Out_Text, r_Pf_Rb_Registration_Books.Is_Guardian, r_Pf_Person_Reqs, p_Registration_Type, 'N') = 1 
+        Then
+          If Pf_Reg_Books_2.Add_Requisite_03(v_Out_Text, r_Pf_Rb_Registration_Books.Is_Guardian, Null, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Person_Reqs) = 1 Then
+            Commit;
+          End If;
+        End If;
+      End If;
+    End If;
+  End Loop;
+
+  Core_Xml_Util.Open_Tag(v_XML, 'response');
+
+  -- Query
+  For I In (
+            Select t.Person_Req_Id,
+                   t.Pinpp,
+                   t.Document,
+                   t.Surname_Latin || ' ' || t.Name_Latin || ' ' || t.Patronym_Latin Name_2,                   
+                   t.Surname_Engl || ' ' || t.Name_Engl Name_0,                   
+                   To_Char(t.Birth_Date_Req, 'dd.mm.yyyy') Birth_Date_Req,
+                   f.Livestatus_Name,
+                   s.Sex_Name,                   
+                   t.Doc_Give_Place,
+                   To_Char(t.Date_Begin_Document, 'dd.mm.yyyy') Date_Begin_Document,
+                   To_Char(t.Date_End_Document, 'dd.mm.yyyy') Date_End_Document,
+                   rt.Code Registration_Code,
+                   rt.Name_1 Registration_Name,
+                   rt.Is_New_Case_Flag,
+                   rt.Is_Prev_Case_Flag
+              From Pf_Person_Reqs t, 
+                  (Select 1 Code, 'Мужской' Sex_Name From dual
+                    Union
+                   Select 2 Code, 'Женский' Livestatus_Name From dual) s,
+                  (Select 1 Code, 'Живой' Livestatus_Name From dual
+                    Union
+                   Select 0 Code, 'Неживой' Livestatus_Name From dual) f,
+                   Pf_Rb_s_Types rt
+                Where t.Sex_Req = s.Code
+                  And t.Livestatus = f.Code
+                  And rt.Code = p_Registration_Type
+                  And t.Pinpp = r_Pf_Person_Reqs.Pinpp
+                  And t.Document = r_Pf_Person_Reqs.Document)
+  Loop
+    Core_Util.Add_Row(v_XML, '<regbook>');
+    Core_Util.Add_Row(v_XML, '<row>');
+    Core_Util.Add_Row(v_XML, '<registration_id>'     || r_Pf_Rb_Registration_Books.Registration_Id || '</registration_id>');
+    --Core_Util.Add_Row(v_XML, '<person_req_id>'       || I.Person_Req_Id       || '</person_req_id>');
+    Core_Util.Add_Row(v_XML, '<pinpp>'               || I.Pinpp               || '</pinpp>');
+    Core_Util.Add_Row(v_XML, '<document>'            || I.Document            || '</document>');
+    Core_Util.Add_Row(v_XML, '<name_2>'              || I.Name_2              || '</name_2>');
+    Core_Util.Add_Row(v_XML, '<name_0>'              || I.Name_0              || '</name_0>');
+    Core_Util.Add_Row(v_XML, '<birth_date_req>'      || I.Birth_Date_Req      || '</birth_date_req>');
+    Core_Util.Add_Row(v_XML, '<livestatus_name>'     || I.Livestatus_Name     || '</livestatus_name>');
+    Core_Util.Add_Row(v_XML, '<sex_name>'            || I.Sex_Name            || '</sex_name>');
+    Core_Util.Add_Row(v_XML, '<doc_give_place>'      || I.Doc_Give_Place      || '</doc_give_place>');
+    Core_Util.Add_Row(v_XML, '<date_begin_document>' || I.Date_Begin_Document || '</date_begin_document>');
+    Core_Util.Add_Row(v_XML, '<date_end_document>'   || I.Date_End_Document   || '</date_end_document>');
+    Core_Util.Add_Row(v_XML, '<registration_code>'   || I.Registration_Code   || '</registration_code>');
+    Core_Util.Add_Row(v_XML, '<registration_name>'   || I.Registration_Name   || '</registration_name>');
+    Core_Util.Add_Row(v_XML, '<is_new_case_flag>'    || I.Is_New_Case_Flag    || '</is_new_case_flag>');
+    Core_Util.Add_Row(v_XML, '<is_prev_case_flag>'   || I.Is_Prev_Case_Flag   || '</is_prev_case_flag>');
+    Core_Util.Add_Row(v_XML, '</row>');
+    Core_Util.Add_Row(v_XML, '</regbook>');
+    v_Count_Row := 1;
+  End Loop;
+  -- Визуальные настройки
+  For I In (
+            Select t.Visual_Type_Code
+              From Pf_RB_S_Visual t 
+                Where t.Registration_Type_Code = p_Registration_Type)
+  Loop
+    Core_Util.Add_Row(v_XML, '<visual>');
+    Core_Util.Add_Row(v_XML, '<row>');
+    Core_Util.Add_Row(v_XML, '<visual_code>' || I.Visual_Type_Code || '</visual_code>');
+    Core_Util.Add_Row(v_XML, '</row>');
+    Core_Util.Add_Row(v_XML, '</visual>');
+  End Loop;
+  
+  Core_Xml_Util.Close_Tag(v_XML, 'response');
+
+  --
+  Open v_Cursor For Select * From Table(Cast(v_XML As Core_Type_Report));
+  Return v_Cursor;
+Exception
+  When Others Then
+    v_Out_Text := v_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+    Core_Util.Throw_Error(v_Out_Text);
+End Add_Registration;
+
+
+Function Add_Registration_Recalc_Inv(
+	o_Out_Text out varchar2,
+  r_Pf_Proactive_Inv_Recalcs  in out pf_Proactive_Inv_Recalcs%rowtype
+) Return Integer Is
+  
+  v_Out_Text       Varchar2(32000);
+  v_Focus_Item     Varchar2(200);
+  --
+	r_Pf_Rb_Registration_Books Pf_Rb_Registration_Books%rowtype;
+  r_Pf_Rb_Attached_Docs      Pf_Rb_Attached_Docs%Rowtype;
+  r_pf_person_notifications  Pf_Person_Notifications%rowtype;
+  r_Parent_Pf_Rb_Reg_Books    Pf_Rb_Registration_Books%Rowtype;
+
+	Begin
+	 
+	
+	  Begin
+    Select t.*
+      Into r_Parent_Pf_Rb_Reg_Books
+      From Pf_Rb_Registration_Books t
+     Where t.Application_Id = r_Pf_Proactive_Inv_Recalcs.Prev_Application_Id;
+  Exception
+    When No_Data_Found Then
+      Null;
+  End;
+	
+  -- Проверка на незакрытую регистрацию
+  v_Out_Text := Null;
+  Check_Exists_Reg(v_Out_Text, '07', r_Pf_Proactive_Inv_Recalcs.Pinpp);
+  If v_Out_Text Is Not Null Then
+        o_out_Text := o_out_Text || v_Out_Text;
+				Return 0;
+  End If;
+
+  -- Проверки по имеющимся заявлениям
+    Check_Exists_App(v_Out_Text, '07', r_Pf_Proactive_Inv_Recalcs.Pinpp);
+    If v_Out_Text Is Not Null Then
+       o_out_Text := o_out_Text || v_Out_Text;
+		    return 0;
+    End If;
+  
+  -- Проверка справки ВТЭК
+  Check_Exists_Vtek(v_Out_Text, '07', r_Pf_Proactive_Inv_Recalcs.Pinpp);
+  If v_Out_Text Is Not Null Then
+     o_out_Text := o_out_Text || v_Out_Text;
+		 return 0;
+  End If;
+
+  r_Pf_Rb_Registration_Books.Registration_Id        := Pf_Rb_Registration_Books_Sq.Nextval;
+  r_Pf_Rb_Registration_Books.Registration_Type_Code := '07';
+  r_Pf_Rb_Registration_Books.Registration_Date      := Sysdate;
+  r_Pf_Rb_Registration_Books.Pinpp                  := r_Pf_Proactive_Inv_Recalcs.Pinpp;
+  r_Pf_Rb_Registration_Books.Sobes_Org_Id           := r_Pf_Proactive_Inv_Recalcs.Sobes_Org_Id;
+  r_Pf_Rb_Registration_Books.Status                 := '00';
+  r_Pf_Rb_Registration_Books.Inps                   := r_Pf_Proactive_Inv_Recalcs.Pinpp;
+  r_Pf_Rb_Registration_Books.Is_Closed              := 'N';
+  r_Pf_Rb_Registration_Books.Created_By             := 1;
+  r_Pf_Rb_Registration_Books.Creation_Date          := Sysdate;
+  r_Pf_Rb_Registration_Books.Last_Updated_By        := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Last_Update_Date       := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Change_Status_By       := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Change_Status_Date     := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Is_Guardian            := '0';	
+	r_Pf_Rb_Registration_Books.Prev_Application_Id   := r_Pf_Proactive_Inv_Recalcs.Prev_Application_Id;
+  r_Pf_Rb_Registration_Books.New_Application_Type  := '02';
+  r_Pf_Rb_Registration_Books.Application_Reason    := 'DOC';
+
+	
+	-- Прикрепляем персону к регистрации
+  r_Pf_Rb_Registration_Books.Person_Id := Add_PF_Person(v_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books);
+
+  If r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+	   o_Out_Text := o_out_Text || v_Out_Text;	
+     Rollback;
+     Return 0;
+  End If;
+	
+	begin
+	select t.*
+		into r_pf_person_notifications
+		from pf_person_notifications t
+	 where t.person_id = r_Pf_Rb_Registration_Books.Person_Id
+		 and t.end_date > sysdate;
+	Exception when others then
+		o_out_Text := o_out_Text || v_Out_Text || sqlerrm;
+	end;
+  r_Pf_Rb_Registration_Books.Phone_Operator_Code    := r_Parent_Pf_Rb_Reg_Books.Phone_Operator_Code;
+  r_Pf_Rb_Registration_Books.Telephone              := r_Parent_Pf_Rb_Reg_Books.Telephone;
+  r_Pf_Rb_Registration_Books.Lang_Id                := r_Parent_Pf_Rb_Reg_Books.Lang_Id;
+	
+	
+  --
+  Select Nvl(Max(t.Org_Registration_Id),0) + 1 Into r_Pf_Rb_Registration_Books.Org_Registration_Id
+      From Pf_Rb_Registration_Books t 
+      Where t.Sobes_Org_Id = r_Pf_Rb_Registration_Books.Sobes_Org_Id;
+  Insert Into Pf_Rb_Registration_Books Values r_Pf_Rb_Registration_Books;
+  Commit;
+  r_Pf_Proactive_Inv_Recalcs.Registration_Id := r_Pf_Rb_Registration_Books.Registration_Id;
+
+      -- Паспорт
+	If Add_RB_Documents(v_Out_Text, r_Pf_Rb_Registration_Books) = 1 Then
+		Commit;
+	End If;
+	-- Справка ВТЭК
+	If Add_RB_Vtek_Doc01(v_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14', r_Pf_Rb_Registration_Books.Registration_Type_Code) = 1 Then
+		Commit;
+	End If;
+			
+	-- Свидетельство о браке
+	If Add_RB_Marriage(v_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Proactive_Inv_Recalcs.Pinpp, r_Pf_Proactive_Inv_Recalcs.Document) = 1 Then
+		Commit;
+	End If;
+      
+	-- Свидетельство о разводе
+	If Add_RB_Divorce(v_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Rb_Registration_Books.Pinpp) = 1 Then
+		Commit;
+	End If;
+	 -- Другие документы
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '02';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+  
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  Commit;
+	Return 1;
+	
+Exception
+  When Others Then
+    v_Out_Text := o_out_Text || v_Out_Text || Sqlerrm || Core_Const.c_New_Line;
+    return 0;
+End Add_Registration_Recalc_Inv;
+
+-- Добавление таблицы "Книга регистраций"
+Function Add_Registration_Grant7(
+  o_Out_Text                   Out Varchar2,
+  r_Pf_Exchange_Mip_Grant_Recv In Pf_Exchange_Mip_Grant_Recv%Rowtype,
+  r_Pf_Rb_Registration_Books   In Out Pf_Rb_Registration_Books%Rowtype,
+  r_Pf_Person_Reqs             In Out Pf_Person_Reqs%Rowtype
+) Return Integer -- значение 0 - ошибка
+Is
+  v_Cursor         Core_Const.t_Cursor;
+  --
+  v_XML            Core_Type_Report;
+  v_Count_Row      Integer := 0;
+  v_Focus_Item     Varchar2(200);
+  v_Return         Number(15);
+  r_Pf_Rb_Attached_Docs Pf_Rb_Attached_Docs%Rowtype;
+Begin
+  v_XML := Core_Type_Report();
+  --
+  r_Pf_Person_Reqs.Pinpp    := r_Pf_Exchange_Mip_Grant_Recv.Pinpp;
+  r_Pf_Person_Reqs.Document := r_Pf_Exchange_Mip_Grant_Recv.Passport_Series || r_Pf_Exchange_Mip_Grant_Recv.Passport_Number;
+  
+  -- Запрос в Электронное правительство
+  v_Return := PF_EXCHANGE_ONLINE.Send_Pinpp(r_Pf_Person_Reqs, o_Out_Text, 'Y');
+
+  If v_Return = 0 Then
+    Return 0;
+  End If;
+
+  o_Out_Text := Null;
+  If r_Pf_Person_Reqs.Livestatus = '0' Then
+    o_Out_Text := 'Получатель уже умер';
+    Return 0;
+  End If;
+
+  -- Проверка на незакрытую регистрацию
+  Check_Exists_Reg(o_Out_Text, r_Pf_Exchange_Mip_Grant_Recv.Application_Type, r_Pf_Exchange_Mip_Grant_Recv.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  -- Проверки по имеющимся заявлениям
+  Check_Exists_App(o_Out_Text, r_Pf_Exchange_Mip_Grant_Recv.Application_Type, r_Pf_Exchange_Mip_Grant_Recv.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  If r_Pf_Exchange_Mip_Grant_Recv.Application_Type In ('17','19') Then
+  -- Проверка справки ВТЭК
+    Check_Exists_Vtek(o_Out_Text, r_Pf_Exchange_Mip_Grant_Recv.Application_Type, r_Pf_Exchange_Mip_Grant_Recv.Pinpp);
+    If o_Out_Text Is Not Null Then
+      Return 0;
+    End If;
+  End If;
+
+  r_Pf_Rb_Registration_Books.Registration_Id        := Pf_Rb_Registration_Books_Sq.Nextval;
+  r_Pf_Rb_Registration_Books.Registration_Type_Code := r_Pf_Exchange_Mip_Grant_Recv.Application_Type;
+  r_Pf_Rb_Registration_Books.Registration_Date      := Sysdate;
+  r_Pf_Rb_Registration_Books.Pinpp                  := r_Pf_Exchange_Mip_Grant_Recv.Pinpp;
+  r_Pf_Rb_Registration_Books.Sobes_Org_Id           := r_Pf_Exchange_Mip_Grant_Recv.Sobes_Org_Id;
+  r_Pf_Rb_Registration_Books.Status                 := '00';
+  r_Pf_Rb_Registration_Books.Inps                   := r_Pf_Exchange_Mip_Grant_Recv.Pinpp;
+  r_Pf_Rb_Registration_Books.Is_Closed              := 'N';
+  r_Pf_Rb_Registration_Books.Created_By             := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Registration_Books.Creation_Date          := Sysdate;
+  r_Pf_Rb_Registration_Books.Last_Updated_By        := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Last_Update_Date       := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Change_Status_By       := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Change_Status_Date     := r_Pf_Rb_Registration_Books.Creation_Date;
+  --r_Pf_Rb_Registration_Books.Is_Auto_Flag           := 'Y';
+  r_Pf_Rb_Registration_Books.Phone_Operator_Code    := r_Pf_Exchange_Mip_Grant_Recv.Phone_Operator_Code;
+  r_Pf_Rb_Registration_Books.Telephone              := r_Pf_Exchange_Mip_Grant_Recv.Phone;
+  r_Pf_Rb_Registration_Books.Lang_Id                := r_Pf_Exchange_Mip_Grant_Recv.Lang_Id;
+  r_Pf_Rb_Registration_Books.Is_Guardian            := Case When r_Pf_Exchange_Mip_Grant_Recv.Is_Guardian In ('1', 'Y') Then '1' Else '0' End;  
+  -- Прикрепляем персону к регистрации
+  r_Pf_Rb_Registration_Books.Person_Id := Add_PF_Person(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books, 1);
+  If r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+    Return 0;
+  End If;
+
+  --
+  Begin
+  Select Nvl(Max(t.Org_Registration_Id),0) + 1 Into r_Pf_Rb_Registration_Books.Org_Registration_Id
+      From Pf_Rb_Registration_Books t 
+      Where t.Sobes_Org_Id = r_Pf_Exchange_Mip_Grant_Recv.Sobes_Org_Id;
+
+    Insert Into Pf_Rb_Registration_Books Values r_Pf_Rb_Registration_Books;
+    Commit;
+  Exception
+    When DUP_VAL_ON_INDEX Then
+      o_Out_Text := 'Рўйхатга олишда хато­лик. Аризани ?айта юборинг. Ошибка книги регистраций. Повторите заявку.';
+      Return 0;
+    When Others Then
+      o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+      Return 0;
+  End;
+    
+  -- Действия по визуальным настройкам
+  For I In (
+            Select t.Visual_Type_Code
+              From Pf_RB_S_Visual t 
+                Where t.Registration_Type_Code = r_Pf_Rb_Registration_Books.Registration_Type_Code)
+  Loop
+    If I.Visual_Type_Code = 'DOCUMENT' Then
+      -- Паспорт
+      If Add_RB_Documents(o_Out_Text, r_Pf_Rb_Registration_Books) = 1 Then
+        Commit;
+      End If;
+      -- Справка ВТЭК
+      If r_Pf_Exchange_Mip_Grant_Recv.Application_Type In ('17') Then
+        If Add_RB_Vtek_Doc17(o_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      End If;
+      If r_Pf_Exchange_Mip_Grant_Recv.Application_Type In ('19') Then
+        If Add_RB_Vtek_Doc19(o_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      End If;
+      -- Свидетельство о браке
+      If Add_RB_Marriage(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Exchange_Mip_Grant_Recv.Pinpp, 
+                         r_Pf_Exchange_Mip_Grant_Recv.Passport_Series || r_Pf_Exchange_Mip_Grant_Recv.Passport_Number) = 1 
+      Then
+        Commit;
+      End If;
+      -- Свидетельство о разводе
+      If Add_RB_Divorce(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Exchange_Mip_Grant_Recv.Pinpp) = 1 Then
+        Commit;
+      End If;
+    End If;
+  End Loop;
+
+  -- Другие документы
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '15';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  Commit;
+  --
+  Return r_Pf_Rb_Registration_Books.Registration_Id;
+Exception
+  When Others Then
+    o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+    Return 0;
+End Add_Registration_Grant7;
+
+-- Добавление таблицы "Книга регистраций"
+Function Add_Registration_Grant_Pens(
+  o_Out_Text                   Out Varchar2,
+  r_Pf_Exchange_Mip_Grant_Recv In Pf_Exchange_Mip_Gr_Pens_Recv%Rowtype,
+  r_Pf_Rb_Registration_Books   In Out Pf_Rb_Registration_Books%Rowtype,
+  r_Pf_Person_Reqs             In Out Pf_Person_Reqs%Rowtype
+) Return Integer -- значение 0 - ошибка
+Is
+  v_Cursor                    Core_Const.t_Cursor;
+  --
+  v_XML                       Core_Type_Report;
+  v_Count_Row                 Integer := 0;
+  v_Focus_Item                Varchar2(200);
+  v_Return                    Number(15);
+  r_Pf_Rb_Attached_Docs       Pf_Rb_Attached_Docs%Rowtype;
+  v_Dead_Cnt                  Integer := 0; 
+Begin
+  v_XML := Core_Type_Report();
+  --
+  r_Pf_Person_Reqs.Pinpp    := r_Pf_Exchange_Mip_Grant_Recv.Pinpp;
+  r_Pf_Person_Reqs.Document := r_Pf_Exchange_Mip_Grant_Recv.Passport_Series || r_Pf_Exchange_Mip_Grant_Recv.Passport_Number;
+  
+  -- Запрос в Электронное правительство
+  v_Return := PF_EXCHANGE_ONLINE.Send_Pinpp(r_Pf_Person_Reqs, o_Out_Text, 'Y');
+
+  If v_Return = 0 Then
+    Return 0;
+  End If;
+
+  o_Out_Text := Null;
+  If r_Pf_Person_Reqs.Livestatus = '0' Then
+    o_Out_Text := 'Получатель уже умер';
+    Return 0;
+  End If;
+  
+  Select Count(*) Into v_Dead_Cnt From Pf_Minyust_Deadpeople d Where d.person_pin = r_Pf_Exchange_Mip_Grant_Recv.Pinpp;
+  If v_Dead_Cnt > 0 Then
+    o_Out_Text := 'Получатель уже умер!!';
+    Return 0;
+  End If;
+
+  -- Проверка на незакрытую регистрацию
+  Check_Exists_Reg(o_Out_Text, r_Pf_Exchange_Mip_Grant_Recv.Application_Type, r_Pf_Exchange_Mip_Grant_Recv.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  -- Проверки по имеющимся заявлениям
+  Check_Exists_App(o_Out_Text, r_Pf_Exchange_Mip_Grant_Recv.Application_Type, r_Pf_Exchange_Mip_Grant_Recv.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  If r_Pf_Exchange_Mip_Grant_Recv.Application_Type In ('02') Then
+  -- Проверка справки ВТЭК
+    Check_Exists_Vtek(o_Out_Text, r_Pf_Exchange_Mip_Grant_Recv.Application_Type, r_Pf_Exchange_Mip_Grant_Recv.Pinpp);
+    If o_Out_Text Is Not Null Then
+      Return 0;
+    End If;
+  End If;
+
+  r_Pf_Rb_Registration_Books.Registration_Id        := Pf_Rb_Registration_Books_Sq.Nextval;
+  r_Pf_Rb_Registration_Books.Registration_Type_Code := r_Pf_Exchange_Mip_Grant_Recv.Application_Type;
+  r_Pf_Rb_Registration_Books.Registration_Date      := nvl(nvl(r_Pf_Exchange_Mip_Grant_Recv.Created_Date_Mip,r_Pf_Exchange_Mip_Grant_Recv.Creation_Date), Sysdate);
+  r_Pf_Rb_Registration_Books.Pinpp                  := r_Pf_Exchange_Mip_Grant_Recv.Pinpp;
+  r_Pf_Rb_Registration_Books.Sobes_Org_Id           := r_Pf_Exchange_Mip_Grant_Recv.Sobes_Org_Id;
+  r_Pf_Rb_Registration_Books.Status                 := '00';
+  r_Pf_Rb_Registration_Books.Inps                   := r_Pf_Exchange_Mip_Grant_Recv.Pinpp;
+  r_Pf_Rb_Registration_Books.Is_Closed              := 'N';
+  r_Pf_Rb_Registration_Books.Created_By             := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Registration_Books.Creation_Date          := Sysdate;
+  r_Pf_Rb_Registration_Books.Last_Updated_By        := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Last_Update_Date       := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Change_Status_By       := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Change_Status_Date     := r_Pf_Rb_Registration_Books.Creation_Date;
+  --r_Pf_Rb_Registration_Books.Is_Auto_Flag           := 'Y';
+  r_Pf_Rb_Registration_Books.Phone_Operator_Code    := r_Pf_Exchange_Mip_Grant_Recv.Phone_Operator_Code;
+  r_Pf_Rb_Registration_Books.Telephone              := r_Pf_Exchange_Mip_Grant_Recv.Phone;
+  r_Pf_Rb_Registration_Books.Lang_Id                := r_Pf_Exchange_Mip_Grant_Recv.Lang_Id;
+  r_Pf_Rb_Registration_Books.Is_Guardian            := Case When r_Pf_Exchange_Mip_Grant_Recv.Is_Guardian In ('1', 'Y') Then '1' Else '0' End;  
+  -- Прикрепляем персону к регистрации
+  r_Pf_Rb_Registration_Books.Person_Id := Add_PF_Person(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books, 1);
+  If r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+    Return 0;
+  End If;
+
+  --
+  Begin
+  Select Nvl(Max(t.Org_Registration_Id),0) + 1 Into r_Pf_Rb_Registration_Books.Org_Registration_Id
+      From Pf_Rb_Registration_Books t 
+      Where t.Sobes_Org_Id = r_Pf_Exchange_Mip_Grant_Recv.Sobes_Org_Id;
+
+    Insert Into Pf_Rb_Registration_Books Values r_Pf_Rb_Registration_Books;
+    Commit;
+  Exception
+    When DUP_VAL_ON_INDEX Then
+      o_Out_Text := 'Рўйхатга олишда хато­лик. Аризани ?айта юборинг. Ошибка книги регистраций. Повторите заявку.';
+      Return 0;
+    When Others Then
+      o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+      Return 0;
+  End;
+    
+  -- Действия по визуальным настройкам
+  For I In (
+            Select t.Visual_Type_Code
+              From Pf_RB_S_Visual t 
+                Where t.Registration_Type_Code = r_Pf_Rb_Registration_Books.Registration_Type_Code)
+  Loop
+    If I.Visual_Type_Code = 'DOCUMENT' Then
+      -- Паспорт
+      If Add_RB_Documents(o_Out_Text, r_Pf_Rb_Registration_Books) = 1 Then
+        Commit;
+      End If;
+      
+      -- Свидетельство о браке
+      If Add_RB_Marriage(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Exchange_Mip_Grant_Recv.Pinpp, 
+                         r_Pf_Exchange_Mip_Grant_Recv.Passport_Series || r_Pf_Exchange_Mip_Grant_Recv.Passport_Number) = 1 
+      Then
+        Commit;
+      End If;
+      -- Свидетельство о разводе
+      If Add_RB_Divorce(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Exchange_Mip_Grant_Recv.Pinpp) = 1 Then
+        Commit;
+      End If;
+      
+      If r_Pf_Exchange_Mip_Grant_Recv.Application_Type In ('02') Then
+        If Add_RB_Vtek_Doc(o_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      End If;
+      
+    End If;
+  End Loop;
+
+  -- Другие документы
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '15';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '02';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  
+  Commit;
+  --
+  Return r_Pf_Rb_Registration_Books.Registration_Id;
+Exception
+  When Others Then
+    o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+    Return 0;
+End Add_Registration_Grant_Pens;
+-- Добавление таблицы "Книга регистраций" -- servise  55_60
+Function Add_Registration_55_60(
+  o_Out_Text                   Out Varchar2,
+  r_Pf_rb_Proactive            In Pf_rb_Proactive%Rowtype,
+  r_Pf_Rb_Registration_Books   In Out Pf_Rb_Registration_Books%Rowtype,
+  r_Pf_Person_Reqs             In Out Pf_Person_Reqs%Rowtype
+) Return Integer -- значение 0 - ошибка
+Is
+  v_Cursor                    Core_Const.t_Cursor;
+  --
+  v_XML                       Core_Type_Report;
+  v_Count_Row                 Integer := 0;
+  v_Focus_Item                Varchar2(200);
+  v_Return                    Number(15);
+  r_Pf_Rb_Attached_Docs       Pf_Rb_Attached_Docs%Rowtype;
+  v_Dead_Cnt                  Integer := 0; 
+Begin
+  v_XML := Core_Type_Report();
+  --
+  r_Pf_Person_Reqs.Pinpp    := r_Pf_rb_Proactive.Pinpp;
+  r_Pf_Person_Reqs.Document := r_Pf_rb_Proactive.Passport_Series || r_Pf_rb_Proactive.Passport_Number;
+  
+  -- Запрос в Электронное правительство
+  v_Return := PF_EXCHANGE_ONLINE.Send_Pinpp(r_Pf_Person_Reqs, o_Out_Text, 'Y');
+
+  If v_Return = 0 Then
+    Return 0;
+  End If;
+
+  o_Out_Text := Null;
+  If r_Pf_Person_Reqs.Livestatus = '0' Then
+    o_Out_Text := 'Получатель уже умер';
+    Return 0;
+  End If;
+  
+  Select Count(*) Into v_Dead_Cnt From Pf_Minyust_Deadpeople d Where d.person_pin = r_Pf_rb_Proactive.Pinpp;
+  If v_Dead_Cnt > 0 Then
+    o_Out_Text := 'Получатель уже умер!!';
+    Return 0;
+  End If;
+
+  -- Проверка на незакрытую регистрацию
+  Check_Exists_Reg(o_Out_Text, r_Pf_rb_Proactive.Application_Type, r_Pf_rb_Proactive.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  -- Проверки по имеющимся заявлениям
+  Check_Exists_App(o_Out_Text, r_Pf_rb_Proactive.Application_Type, r_Pf_rb_Proactive.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  -- Проверка справки ВТЭК
+ If r_Pf_rb_Proactive.Application_Type In ('02') Then
+  -- Проверка справки ВТЭК
+    Check_Exists_Vtek(o_Out_Text, r_Pf_rb_Proactive.Application_Type, r_Pf_rb_Proactive.Pinpp);
+    If o_Out_Text Is Not Null Then
+      Return 0;
+    End If;
+  End If;
+  
+  r_Pf_Rb_Registration_Books.Registration_Id        := Pf_Rb_Registration_Books_Sq.Nextval;
+  r_Pf_Rb_Registration_Books.Registration_Type_Code := r_Pf_rb_Proactive.Application_Type;
+  r_Pf_Rb_Registration_Books.Registration_Date      := r_Pf_rb_Proactive.Creation_Date;
+  r_Pf_Rb_Registration_Books.Pinpp                  := r_Pf_rb_Proactive.Pinpp;
+  r_Pf_Rb_Registration_Books.Sobes_Org_Id           := r_Pf_rb_Proactive.Sobes_Org_Id;
+  r_Pf_Rb_Registration_Books.Status                 := '00';
+  r_Pf_Rb_Registration_Books.Inps                   := r_Pf_rb_Proactive.Pinpp;
+  r_Pf_Rb_Registration_Books.Is_Closed              := 'N';
+  r_Pf_Rb_Registration_Books.Created_By             := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Registration_Books.Creation_Date          := Sysdate;
+  r_Pf_Rb_Registration_Books.Last_Updated_By        := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Last_Update_Date       := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Change_Status_By       := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Change_Status_Date     := r_Pf_Rb_Registration_Books.Creation_Date;
+  --r_Pf_Rb_Registration_Books.Is_Auto_Flag           := 'Y';
+  r_Pf_Rb_Registration_Books.Phone_Operator_Code    := r_Pf_rb_Proactive.Phone_Operator_Code;
+  r_Pf_Rb_Registration_Books.Telephone              := r_Pf_rb_Proactive.Phone;
+  r_Pf_Rb_Registration_Books.Lang_Id                := r_Pf_rb_Proactive.Lang_Id;
+  r_Pf_Rb_Registration_Books.Is_Guardian            := r_Pf_rb_Proactive.Is_Guardian;  
+  -- Прикрепляем персону к регистрации
+  r_Pf_Rb_Registration_Books.Person_Id := Add_PF_Person(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books, 1);
+  If r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+    Return 0;
+  End If;
+
+  --
+  Begin
+  Select Nvl(Max(t.Org_Registration_Id),0) + 1 Into r_Pf_Rb_Registration_Books.Org_Registration_Id
+      From Pf_Rb_Registration_Books t 
+      Where t.Sobes_Org_Id = r_Pf_rb_Proactive.Sobes_Org_Id;
+
+    Insert Into Pf_Rb_Registration_Books Values r_Pf_Rb_Registration_Books;
+    Commit;
+  Exception
+    When DUP_VAL_ON_INDEX Then
+      o_Out_Text := 'Рўйхатга олишда хато­лик. Аризани Кайта юборинг. Ошибка книги регистраций. Повторите заявку.';
+      Return 0;
+    When Others Then
+      o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+      Return 0;
+  End;
+    
+  -- Действия по визуальным настройкам
+  For I In (
+            Select t.Visual_Type_Code
+              From Pf_RB_S_Visual t 
+                Where t.Registration_Type_Code = r_Pf_Rb_Registration_Books.Registration_Type_Code)
+  Loop
+    If I.Visual_Type_Code = 'DOCUMENT' Then
+      -- Паспорт
+      If Add_RB_Documents(o_Out_Text, r_Pf_Rb_Registration_Books) = 1 Then
+        Commit;
+      End If;
+      
+      -- Свидетельство о браке
+      If Add_RB_Marriage(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_rb_Proactive.Pinpp, 
+                         r_Pf_rb_Proactive.Passport_Series || r_Pf_rb_Proactive.Passport_Number) = 1 
+      Then
+        Commit;
+      End If;
+      -- Свидетельство о разводе
+      If Add_RB_Divorce(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_rb_Proactive.Pinpp) = 1 Then
+        Commit;
+      End If;
+      
+      If r_Pf_rb_Proactive.Application_Type In ('02') Then
+        If Add_RB_Vtek_Doc(o_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, '14') = 1 Then
+          Commit;
+        End If;
+      End If;
+      
+    End If;
+  End Loop;
+
+  -- Другие документы
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '15';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '02';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  
+  Commit;
+  --
+  Return r_Pf_Rb_Registration_Books.Registration_Id;
+Exception
+  When Others Then
+    o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+    Return 0;
+End Add_Registration_55_60;
+-- Добавление таблицы "Книга регистраций" (Проактив: 14 тип)
+Function Add_Registration_14(
+  o_Out_Text                   Out Varchar2,
+  r_Pf_Proactive_14_Queue      In Pf_Proactive_14_Queue%Rowtype,
+  r_Parent_Pf_Applications     In Pf_Applications%Rowtype,
+  r_Pf_Persons                 In Pf_Persons%Rowtype,
+  r_Pf_Rb_Registration_Books   In Out Pf_Rb_Registration_Books%Rowtype,
+  r_Pf_Person_Reqs             In Out Pf_Person_Reqs%Rowtype
+) Return Integer -- значение 0 - ошибка
+Is
+  --
+  v_Focus_Item                Varchar2(200);
+  v_Return                    Number(15);
+  r_Pf_Rb_Attached_Docs       Pf_Rb_Attached_Docs%Rowtype;
+  v_Dead_Cnt                  Integer := 0;
+  v_Application_Type          Pf_Applications.Application_Type%Type := '14';
+  r_Parent_Pf_Rb_Reg_Books    Pf_Rb_Registration_Books%Rowtype;
+Begin
+  
+  Begin
+    Select t.*
+      Into r_Parent_Pf_Rb_Reg_Books
+      From Pf_Rb_Registration_Books t
+     Where t.Application_Id = r_Parent_Pf_Applications.Application_Id;
+  Exception
+    When No_Data_Found Then
+      Null;
+  End;
+  
+  --
+  r_Pf_Person_Reqs.Pinpp    := r_Pf_Persons.Pinpp;
+  r_Pf_Person_Reqs.Document := r_Pf_Persons.Passport_Series || r_Pf_Persons.Passport_Number;
+  
+  -- Запрос в Электронное правительство
+  v_Return := PF_EXCHANGE_ONLINE.Send_Pinpp(r_Pf_Person_Reqs, o_Out_Text, 'Y');
+
+  If v_Return = 0 Then
+    Return 0;
+  End If;
+
+  o_Out_Text := Null;
+  If r_Pf_Person_Reqs.Livestatus = '0' Then
+    o_Out_Text := 'Получатель уже умер!';
+    Return 0;
+  End If;
+  
+  Select Count(*) Into v_Dead_Cnt From Pf_Minyust_Deadpeople d Where d.person_pin = r_Pf_Persons.Pinpp;
+  If v_Dead_Cnt > 0 Then
+    o_Out_Text := 'Получатель уже умер!!';
+    Return 0;
+  End If;
+
+  -- Проверка на незакрытую регистрацию
+  Check_Exists_Reg(o_Out_Text, v_Application_Type, r_Pf_Persons.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  -- Проверки по имеющимся заявлениям
+  Check_Exists_App(o_Out_Text, v_Application_Type, r_Pf_Persons.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  
+  -- Проверка справки ВТЭК
+  Check_Exists_Vtek(o_Out_Text, v_Application_Type, r_Pf_Persons.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  r_Pf_Rb_Registration_Books.Registration_Id        := Pf_Rb_Registration_Books_Sq.Nextval;
+  r_Pf_Rb_Registration_Books.Registration_Type_Code := v_Application_Type;
+  r_Pf_Rb_Registration_Books.Registration_Date      := r_Pf_Proactive_14_Queue.Creation_Date;
+  r_Pf_Rb_Registration_Books.Pinpp                  := r_Pf_Persons.Pinpp;
+  r_Pf_Rb_Registration_Books.Sobes_Org_Id           := r_Parent_Pf_Applications.Sobes_Org_Id;
+  r_Pf_Rb_Registration_Books.Status                 := '00';
+  r_Pf_Rb_Registration_Books.Inps                   := r_Pf_Persons.Pinpp;
+  r_Pf_Rb_Registration_Books.Is_Closed              := 'N';
+  r_Pf_Rb_Registration_Books.Created_By             := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Registration_Books.Creation_Date          := Sysdate;
+  r_Pf_Rb_Registration_Books.Last_Updated_By        := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Last_Update_Date       := r_Pf_Rb_Registration_Books.Creation_Date;
+  r_Pf_Rb_Registration_Books.Change_Status_By       := r_Pf_Rb_Registration_Books.Created_By;
+  r_Pf_Rb_Registration_Books.Change_Status_Date     := r_Pf_Rb_Registration_Books.Creation_Date;
+  --r_Pf_Rb_Registration_Books.Is_Auto_Flag           := 'Y';
+  r_Pf_Rb_Registration_Books.Phone_Operator_Code    := r_Parent_Pf_Rb_Reg_Books.Phone_Operator_Code;
+  r_Pf_Rb_Registration_Books.Telephone              := r_Parent_Pf_Rb_Reg_Books.Telephone;
+  r_Pf_Rb_Registration_Books.Lang_Id                := r_Parent_Pf_Rb_Reg_Books.Lang_Id;
+  r_Pf_Rb_Registration_Books.Is_Guardian            := r_Parent_Pf_Rb_Reg_Books.Is_Guardian;  
+  -- Прикрепляем персону к регистрации
+  r_Pf_Rb_Registration_Books.Person_Id := Add_PF_Person(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books, 1);
+  If r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+    Return 0;
+  End If;
+
+  --
+  Begin
+  Select Nvl(Max(t.Org_Registration_Id),0) + 1 Into r_Pf_Rb_Registration_Books.Org_Registration_Id
+      From Pf_Rb_Registration_Books t 
+      Where t.Sobes_Org_Id = r_Parent_Pf_Applications.Sobes_Org_Id;
+
+    Insert Into Pf_Rb_Registration_Books Values r_Pf_Rb_Registration_Books;
+    Commit;
+  Exception
+    When DUP_VAL_ON_INDEX Then
+      o_Out_Text := 'Рўйхатга олишда хато­лик. Аризани ?айта юборинг. Ошибка книги регистраций. Повторите заявку.';
+      Return 0;
+    When Others Then
+      o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+      Return 0;
+  End;
+    
+  -- Действия по визуальным настройкам
+  For I In (
+            Select t.Visual_Type_Code
+              From Pf_RB_S_Visual t 
+                Where t.Registration_Type_Code = r_Pf_Rb_Registration_Books.Registration_Type_Code)
+  Loop
+    If I.Visual_Type_Code = 'DOCUMENT' Then
+      -- Паспорт
+      If Add_RB_Documents(o_Out_Text, r_Pf_Rb_Registration_Books) = 1 Then
+        Commit;
+      End If;
+      
+      -- Свидетельство о браке
+      If Add_RB_Marriage(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Persons.Pinpp, 
+                         r_Pf_Persons.Passport_Series || r_Pf_Persons.Passport_Number) = 1 
+      Then
+        Commit;
+      End If;
+      -- Свидетельство о разводе
+      If Add_RB_Divorce(o_Out_Text, r_Pf_Rb_Registration_Books, r_Pf_Persons.Pinpp) = 1 Then
+        Commit;
+      End If;
+      
+      
+      If Add_RB_Vtek_Doc(o_Out_Text, r_Pf_Rb_Registration_Books.Registration_Id, r_Pf_Rb_Registration_Books.Pinpp, v_Application_Type) = 1 Then
+        Commit;
+      End If;
+      
+    End If;
+  End Loop;
+
+  -- Другие документы
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '15';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  
+  r_Pf_Rb_Attached_Docs.Registration_Id   := r_Pf_Rb_Registration_Books.Registration_Id;
+  r_Pf_Rb_Attached_Docs.Doc_Id            := Pf_Case_Docs_Sq.Nextval;
+  r_Pf_Rb_Attached_Docs.Doc_Type_Code     := '02';
+  r_Pf_Rb_Attached_Docs.Created_By        := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  r_Pf_Rb_Attached_Docs.Creation_Date     := Sysdate;
+  r_Pf_Rb_Attached_Docs.Last_Updated_By   := r_Pf_Rb_Attached_Docs.Created_By;
+  r_Pf_Rb_Attached_Docs.Last_Update_Date  := r_Pf_Rb_Attached_Docs.Creation_Date;
+  r_Pf_Rb_Attached_Docs.Is_Auto_Flag      := 'Y';
+
+  Insert Into Pf_Rb_Attached_Docs Values r_Pf_Rb_Attached_Docs;
+  
+  Commit;
+  --
+  Return r_Pf_Rb_Registration_Books.Registration_Id;
+Exception
+  When Others Then
+    o_Out_Text := o_Out_Text || Sqlerrm || Core_Const.c_New_Line || Dbms_Utility.Format_Error_Backtrace();
+    Return 0;
+End Add_Registration_14;
+
+
+-- Отправка регистрации вышестоящему
+Function Send_Registration(
+  o_Out_Text          Out Varchar2,                       -- Возвращаемое сообщение
+  --
+  p_Registration_Id   Pf_Rb_Registration_Books.Registration_Id%Type,
+  is_Check_For_Phone  Varchar2 := 'Y'
+) Return Integer  -- 1 - операция успешно завершена; 0 - Ошибка
+Is
+  c_Module_Name Constant Core_S_Lang_Msg.Module_Name%Type := 'PF_REG_BOOKS.APPROVE_REGISTRATION';
+  --
+  r_Pf_Rb_Registration_Books Pf_Rb_Registration_Books%Rowtype;
+  r_Pf_Rb_Activities         Pf_Rb_Activities%Rowtype;
+  v_Focus_Item               Varchar2(200);
+  v_Lang_Id                  Varchar2(1) := Core_Env.Get_Env('LANG_ID');
+  v_App_Type                 Pf_Applications.Application_Type%Type;  
+  v_Application_id           Pf_Applications.Application_Id%Type;
+Begin
+  Select * Into r_Pf_Rb_Registration_Books
+    From Pf_Rb_Registration_Books t
+    Where t.Registration_Id = p_Registration_Id;
+
+  /*If Pf_Exchanges_Labor.Send_Activities_Notification(o_Out_Text, p_Registration_Id) = 0 Then
+    Null;
+    o_Out_Text := Null;
+    --Return 0;
+  End If;*/
+
+  -- Проверки по имеющимся заявлениям
+  Check_Exists_App(o_Out_Text, r_Pf_Rb_Registration_Books.Registration_Type_Code, r_Pf_Rb_Registration_Books.Pinpp);
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  -- Проверки по визуальным настройкам
+  For I In (
+            Select t.Visual_Type_Code
+              From Pf_RB_S_Visual t 
+                Where t.Registration_Type_Code = r_Pf_Rb_Registration_Books.Registration_Type_Code)
+  Loop
+    -- Список прикрепляемых документов
+    If I.Visual_Type_Code = 'DOCUMENT' Then
+      Check_Approve_Docs(o_Out_Text, r_Pf_Rb_Registration_Books);
+    End If;
+
+    If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('03') And r_Pf_Rb_Registration_Books.Is_Dependent_App = 'Y' Then
+      Null;
+    Else
+      -- Иждевенцы
+      If I.Visual_Type_Code = 'DEPENDENT' Then
+        Check_Dependents(o_Out_Text, r_Pf_Rb_Registration_Books);
+      End If;
+
+      -- Кормильцы
+      If I.Visual_Type_Code = 'BREADWIN' Then
+        Check_Breadwinners(o_Out_Text, r_Pf_Rb_Registration_Books);
+      End If;
+    End If;
+
+    -- Основные данные 
+    If I.Visual_Type_Code In ('BASE01','BASE50') Then
+      Check_RB_Base_Data_01(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books, is_Check_For_Phone);
+      --o_Out_Text := o_Out_Text || o_Message;
+    End If;
+
+    -- Основные данные "Заявление на перерасчет пенсии"
+    If I.Visual_Type_Code = 'BASE07' Then
+      Check_RB_Base_Data_07(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books, 'N');
+    End If;
+    -- 08
+    If I.Visual_Type_Code = 'BASE08' Then
+      Check_RB_Base_Data_08(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books);
+    End If;
+
+    -- Основные данные "Заявление на единовременное пособие (суинчи)"
+    If I.Visual_Type_Code = 'BASE12' Then
+      Check_RB_Base_Data_12(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books);
+    End If;
+
+    -- Основные данные "Заявление на получение пенсии и пособий недополученной пенсионером в связи со смертью"
+    If I.Visual_Type_Code = 'BASE22' Then
+      Check_RB_Base_Data_22(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books);
+      -- Проверка свидетельства о смерти
+      Select t.Application_Type Into v_App_Type
+        From Pf_Applications t
+          Where t.Application_Id = r_Pf_Rb_Registration_Books.Prev_Application_Id;
+      --
+      If v_App_Type In ('18', '26', '29') Then 
+        If Core_Util.Get_Exists_Row (
+            p_Table     => 'Pf_Rb_Registration_Books b, Pf_Rb_Attached_Docs t, Pf_Dependents d, Pf_Minyust_Deadpeople md',
+            p_Where     => 't.Registration_Id = b.Registration_Id
+                           And b.Prev_Application_Id = d.Application_Id
+                           And md.Person_Pin = d.Pinpp 
+                           And t.Death_Date = md.Body_Death_Date
+                           And t.Doc_Type_Code = ''06'' And b.Registration_Id = :1',
+            p_Arg1      => r_Pf_Rb_Registration_Books.Registration_Id,
+            p_Arg_Count => 1
+          ) = 0
+        Then
+          o_Out_Text := o_Out_Text || 'В данных минюста нет сведений о смерти иждивенца' || Core_Const.c_New_Line;
+          Return 0;
+        End If;        
+      Else 
+        If Core_Util.Get_Exists_Row (
+            p_Table     => 'Pf_Rb_Registration_Books b, Pf_Applications a, Pf_Persons p, Pf_Minyust_Deadpeople md, Pf_Rb_Attached_Docs t',
+            p_Where     => 'a.Application_Id = b.Prev_Application_Id And p.Person_Id = a.Person_Id And md.Person_Pin = p.Pinpp And t.Registration_Id = b.Registration_Id
+                           And t.Death_Date = md.Body_Death_Date
+                           And t.Doc_Type_Code = ''06'' And b.Registration_Id = :1',
+            p_Arg1      => r_Pf_Rb_Registration_Books.Registration_Id,
+            p_Arg_Count => 1
+          ) = 0
+        Then
+          If Core_Util.Get_Exists_Row (
+            p_Table     => 'Pf_Rb_Registration_Books b, Pf_Applications a, Pf_Persons p',
+            p_Where     => 'a.Application_Id = b.Prev_Application_Id And p.Person_Id = a.Person_Id and 
+                            b.Registration_Id = :1 and p.pinpp is null ',
+            p_Arg1      => r_Pf_Rb_Registration_Books.Registration_Id,
+            p_Arg_Count => 1
+          ) = 1 
+        Then
+          Null;
+          Else
+          o_Out_Text := o_Out_Text || 'В данных минюста нет сведений о смерти' || Core_Const.c_New_Line;
+          Return 0;
+         End If;
+        End If;
+      End If;  
+    End If;
+
+    -- Уход
+    If I.Visual_Type_Code = 'ACTIVITIES' Then
+      Select * Into r_Pf_Rb_Activities From Pf_Rb_Activities t Where t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id;
+      Check_RB_Activities(o_Out_Text, v_Focus_Item, r_Pf_Rb_Activities);
+    End If;
+    -- Адрес
+    If I.Visual_Type_Code = 'ADDRESS' Then
+      If Core_Util.Get_Exists_Row(
+         p_Table     => 'Pf_Rb_Person_Addresses t',
+         p_Where     => 't.Registration_Id = :1',
+         p_Arg1      => r_Pf_Rb_Registration_Books.Registration_Id,
+         p_Arg_Count => 1) = 0
+      Then
+        o_Out_Text := o_Out_Text || 'Не введен адрес' || Core_Const.c_New_Line;
+      End If;
+    End If;
+  End Loop;
+
+  If o_Out_Text Is Not Null Then
+    Return 0;
+  End If;
+
+  -- проверка по ЛС на существование незакрытой регистрации
+  If r_Pf_Rb_Registration_Books.Prev_Application_Id Is Not Null Then
+    For I In (
+      Select Case When v_Lang_Id = 1 Then p.Name_1 Else p.Name_2 End Pers_Name, 
+             Case When v_Lang_Id = 1 Then o.Name_1 Else o.Name_2 End Org_Name, 
+             Case When v_Lang_Id = 1 Then apt.Name_1 Else apt.Name_2 End App_Type_Name
+      From Pf_Rb_Registration_Books rb
+           Join Pf_Rb_s_Types ty On ty.Code = rb.Registration_Type_Code
+           Join Pf_Persons p On p.Person_Id = rb.Person_Id
+           Join Pf_Applications a On a.Application_Id = rb.Prev_Application_Id
+           Join Pf_s_Application_Types apt On apt.Code = a.Application_Type
+           Join Os_Organizations o On o.Organization_Id = a.Sobes_Org_Id
+        Where rb.Registration_Id != r_Pf_Rb_Registration_Books.Registration_Id
+              And rb.Prev_Application_Id = r_Pf_Rb_Registration_Books.Prev_Application_Id
+              And rb.Status Not In ('02', '03')
+    ) Loop
+      o_Out_Text := o_Out_Text || I.Pers_Name || ' Ошибочная регистрация, существует в районном отделении ' || I.Org_Name || ' с заявлением ' || I.App_Type_Name || Core_Const.c_New_Line;
+      Return 0;
+    End Loop;
+  End If;
+
+  -- проверка по ЛС
+  If r_Pf_Rb_Registration_Books.Prev_Application_Id Is Not Null Then
+    If Core_Util.Get_Exists_Row (
+        p_Table     => 'Pf_Applications',
+        p_Where     => 'Application_Type Not In (''12'',''13'') And Application_Id = :1',
+        p_Arg1      => r_Pf_Rb_Registration_Books.Prev_Application_Id,
+        p_Arg_Count => 1
+      ) = 0
+    Then
+      o_Out_Text := o_Out_Text || 'Не существует заявления' || Core_Const.c_New_Line;
+      Return 0;
+    End If;
+  End If;
+
+  -- контроль на закрытость восстанавливаемого(перерасчитываемого) заявления
+  If r_Pf_Rb_Registration_Books.Registration_Type_Code = '08' Then
+    If Core_Util.Get_Exists_Row(
+       p_Table     => 'Pf_Applications',
+       p_Where     => 'Close_Reason = ''00'' And Application_Id = :1',
+       p_Arg1      => r_Pf_Rb_Registration_Books.Prev_Application_Id,
+       p_Arg_Count => 1) = 1
+    Then
+      o_Out_Text := 'Не закрыто предыдущее заявление.';
+      Return 0;
+    End If;
+  End If;
+
+  -- контроль на закрытость заявления (недополучка)  ----10059 itsm
+  If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('22') Then
+    If Core_Util.Get_Exists_Row(
+       p_Table     => 'Pf_Applications',
+       p_Where     => 'Close_Reason In (''01'', ''21'') And Application_Id = :1',
+       p_Arg1      => r_Pf_Rb_Registration_Books.Prev_Application_Id,
+       p_Arg_Count => 1) = 0
+    Then
+      o_Out_Text := 'Предыдущее заявление не закрыто - "по причине смерти", "смерть иждивенца".';
+      Return 0;
+    End If;
+  End If;
+
+  --
+  If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('50') Then
+    If Core_Util.Get_Exists_Row(
+       p_Table     => 'Pf_Rb_Registration_Books t, Pf_Rb_Activities r',
+       p_Where     => 't.Registration_Id = r.Registration_Id And t.Registration_Id = :1',
+       p_Arg1      => r_Pf_Rb_Registration_Books.Registration_Id,
+       p_Arg_Count => 1) = 0
+    Then
+      o_Out_Text := 'Не заполнен акт об уходе.';
+      Return 0;
+    End If;
+  End If;
+  
+  -- Изменение статуса
+  Update Pf_Rb_Registration_Books t
+    Set t.Status = '04',
+        t.Send_By = Nvl(Core_Env.Get_Env('USER_ID'), 1),
+        t.Send_Date = Sysdate,
+        t.Change_Status_By = Nvl(Core_Env.Get_Env('USER_ID'), 1),
+        t.Change_Status_Date = Sysdate
+    Where t.Registration_Id = p_Registration_Id;
+  --
+  o_Out_Text := Core_Lang.Get_All_Msg(Core_Const.c_Appl_Code, 'SAVE_SUCCESS');
+  -- Commit;
+  If Nvl(Core_Env.Get_Env('USER_ID'), 1) > 1 Then
+    v_Application_id := Pf_Reg_Books.Approve_Registration(o_Out_Text, p_Registration_Id);
+    If v_Application_id = 0 Then
+      Return 0;
+    End If;
+  End If;
+  Commit;
+  Return 1;
+Exception
+  When Others Then
+    Rollback;
+    Core_Util.Get_Error_Message(
+      o_Out_Text, Pf_Const.c_Appl_Code,
+      p_Module_Type => Core_Lang.c_Module_Type_Ora_Prc,
+      p_Module_Name => c_Module_Name,
+      p_Msg_Code => 'SAVE_ERROR'
+    );
+    Return 0;
+End Send_Registration;
+
+
+
+-- Утверждение регистрации
+Function Approve_Registration(
+  o_Out_Text          Out Varchar2,                       -- Возвращаемое сообщение
+  --
+  p_Registration_Id   Pf_Rb_Registration_Books.Registration_Id%Type
+) Return Integer  -- 1 - операция успешно завершена; 0 - Ошибка
+Is
+  c_Module_Name Constant Core_S_Lang_Msg.Module_Name%Type := 'PF_REG_BOOKS.APPROVE_REGISTRATION';
+  --
+  r_Pf_Rb_Registration_Books Pf_Rb_Registration_Books%Rowtype;
+  v_Focus_Item               Varchar2(200);
+  r_Pf_Applications          Pf_Applications%Rowtype;
+  v_New_Case                 Pf_Rb_s_Types.Is_New_Case_Flag%Type;
+  v_User_Id                  Core_Users.User_Id%Type := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+  --
+  r_Prev_Applications        Pf_Applications%Rowtype;
+  r_Pf_Vtek_Docs             Pf_Vtek_Docs%Rowtype;
+  v_Where                    Varchar2(200);
+  v_Cnt                      Int := 0;
+  
+  Type t_Pf_Rb_Attached_Docs Is Table Of Pf_Rb_Attached_Docs%Rowtype;
+  m_Pf_Rb_Attached_Docs  t_Pf_Rb_Attached_Docs;
+  Type t_Pf_Rb_Dependents Is Table Of Pf_Rb_Dependents%Rowtype;
+  m_Pf_Rb_Dependents  t_Pf_Rb_Dependents;
+  Type t_Pf_Rb_Breadwinners Is Table Of Pf_Rb_Breadwinners%Rowtype;
+  m_Pf_Rb_Breadwinners  t_Pf_Rb_Breadwinners;
+  
+  v_paid_status               pf_doc_lists.paid_status%Type;
+  v_death_date                pf_rb_attached_docs.death_date%Type;
+  v_shipment_detail_id        pf_pens_shipment_details.detail_shipment_id%Type;
+  v_App_Close_Reason          Pf_Applications.Close_Reason%Type;
+  
+  --
+  Procedure Person_Notif
+    Is
+     -- Pragma Autonomous_Transaction;
+      r_Pf_Person_Notifications Pf_Person_Notifications%Rowtype;
+      r_Pf_Person_Notification_His  Pf_Person_Notification_His%Rowtype;
+      v_Sobes_Org_Id Os_Organizations.Organization_Id%Type := Core_Env.Get_Env('PF_ADMIN_ORG');
+      v_Notification_Text Pf_Person_Notification_His.Notification_Text%Type;
+    Begin
+    If r_Pf_Rb_Registration_Books.Phone_Operator_Code Is Null Or r_Pf_Rb_Registration_Books.Telephone Is Null Then Return; End If;
+    
+    If r_Pf_Rb_Registration_Books.Registration_Type_Code Not In (
+      '01', --Заявление на назначение пенсии по возрасту
+      '02', --Заявление на назначение пенсии по инвалидности
+      '03', --Заявление на назначение пенсии по СПК
+      '05', --Заявление на назначение пенсии по инвалидности (ВЗ)
+      '06', --Заявление на назначение пенсии по СПК (ВЗ)
+      '10', --Заявление на выделение доли из пенсии по СПК
+      '14', --Заявление на компенсации (к пенсии по комм. жилищным)
+      '15', --Заявление на возмещение вреда в связи с поврежденим здоровья
+      '20', --Заявление на возмещение вреда в связи со смертью кормильца
+      '23'  --Заявление на получение пенсии по СПК на ребенка находящегося на полном гос.обеспечении
+     ) Then
+      Return;
+    End If;
+    
+    r_Pf_Person_Notifications.Person_Id           := r_Pf_Rb_Registration_Books.Person_Id;
+    r_Pf_Person_Notifications.Sobes_Org_Id        := v_Sobes_Org_Id;
+    r_Pf_Person_Notifications.Phone_Operator_Code := r_Pf_Rb_Registration_Books.Phone_Operator_Code;
+    r_Pf_Person_Notifications.Phone_Number        := r_Pf_Rb_Registration_Books.Telephone ;
+    r_Pf_Person_Notifications.Begin_Date          := Trunc(Sysdate);
+    r_Pf_Person_Notifications.End_Date            := Pf_Const.c_Default_Max_Date;
+    r_Pf_Person_Notifications.Lang_Id             := r_Pf_Rb_Registration_Books.Lang_Id;
+    r_Pf_Person_Notifications.Last_Updated_By     := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+    r_Pf_Person_Notifications.Last_Update_Date    := Sysdate;
+    r_Pf_Person_Notifications.Is_Approve_Flag     := 'Y';
+    r_Pf_Person_Notifications.Case_Number         := r_Pf_Applications.Case_Number;
+    r_Pf_Person_Notifications.Created_By          := r_Pf_Person_Notifications.Last_Updated_By;
+    r_Pf_Person_Notifications.Creation_Date       := r_Pf_Person_Notifications.Last_Update_Date;
+    --
+    Begin 
+        Select t.Notification_Id Into  r_Pf_Person_Notifications.Notification_Id From Pf_Person_Notifications t
+          Where t.Case_Number = r_Pf_Applications.Case_Number
+           And Sysdate Between t.Begin_Date And t.End_Date
+           And rownum = 1;
+    Exception
+      When No_Data_Found Then
+        Select Pf_Person_Notifications_Sq.Nextval Into r_Pf_Person_Notifications.Notification_Id From Dual;
+        Insert Into Pf_Person_Notifications Values r_Pf_Person_Notifications;
+        
+        Update Pf_Person_Notifications t
+            Set t.End_Date = Case When t.begin_date >= Trunc(Sysdate - 1) Then t.begin_date Else Trunc(Sysdate - 1) End,
+                t.last_updated_by  = r_Pf_Person_Notifications.Last_Updated_By,
+                t.Last_Update_Date = r_Pf_Person_Notifications.Last_Update_Date,
+                t.is_approve_flag  = 'A'
+            Where t.phone_operator_code = r_Pf_Person_Notifications.Phone_Operator_Code
+              And t.phone_number        = r_Pf_Person_Notifications.Phone_Number
+              And t.person_id           != r_Pf_Person_Notifications.Person_Id
+              And Sysdate Between t.begin_date And t.end_date;
+        
+    End;
+    --
+    If r_Pf_Applications.Application_Type Not In ('18','26','29') Then -- исключаем проактив, для них сразу идет смс о назначении
+      Select Case When r_Pf_Rb_Registration_Books.Lang_Id = 1 Then T.Notification_Text_1  
+                  When r_Pf_Rb_Registration_Books.Lang_Id = 2 Then T.Notification_Text_2    
+                  When r_Pf_Rb_Registration_Books.Lang_Id = 3 Then T.Notification_Text_3
+             End Into v_Notification_Text
+        From Pf_s_Notification_Types T
+        Where T.Code = '67';
+      --   
+      v_Notification_Text := Replace(v_Notification_Text, '<DATE>', To_Char(r_Pf_Rb_Registration_Books.Registration_Date, 'dd.mm.yyyy'));
+      v_Notification_Text := Replace(v_Notification_Text, '<N>', r_Pf_Rb_Registration_Books.Org_Registration_Id);
+      r_Pf_Person_Notification_His.Notification_His_Id    := Pf_Person_Notification_His_Sq.Nextval;
+      r_Pf_Person_Notification_His.Notification_Id        := r_Pf_Person_Notifications.Notification_Id;
+      r_Pf_Person_Notification_His.Total_Summ             := 0;
+      r_Pf_Person_Notification_His.Sms_Summ               := 0;
+      r_Pf_Person_Notification_His.Period_Code            := To_Char(Sysdate, 'YYYY/MM');
+      r_Pf_Person_Notification_His.Sobes_Org_Id           := r_Pf_Person_Notifications.Sobes_Org_Id;
+      r_Pf_Person_Notification_His.Notification_Text      := v_Notification_Text;
+      r_Pf_Person_Notification_His.Status                 := '01';
+      r_Pf_Person_Notification_His.Is_Charged_Flag        := Null;
+      r_Pf_Person_Notification_His.Doc_List_Id            := Null;
+      r_Pf_Person_Notification_His.Created_By             := 1;
+      r_Pf_Person_Notification_His.Creation_Date          := Sysdate;
+      r_Pf_Person_Notification_His.Last_Updated_By        := 1;
+      r_Pf_Person_Notification_His.Last_Update_Date       := r_Pf_Person_Notification_His.Creation_Date;
+      r_Pf_Person_Notification_His.Notification_Type      := '67';
+      r_Pf_Person_Notification_His.Case_Number            := Null;
+      r_Pf_Person_Notification_His.Phone_Operator_Code    := r_Pf_Person_Notifications.Phone_Operator_Code;
+      r_Pf_Person_Notification_His.Phone_Number           := r_Pf_Person_Notifications.Phone_Number;
+      r_Pf_Person_Notification_His.Notification_Type_Send := 1;
+      r_Pf_Person_Notification_His.Lang_Id                := r_Pf_Person_Notifications.Lang_Id;
+      r_Pf_Person_Notification_His.Exchange_Sms_Id        := Null;
+      r_Pf_Person_Notification_His.Sms_Data               := Sysdate;
+      r_Pf_Person_Notification_His.Sms_Id                 := Pf_Sms_Id_Sq.Nextval;
+      Insert Into Pf_Person_Notification_His Values r_Pf_Person_Notification_His;
+    End If;     
+  --
+  Exception
+    When Others Then
+      Null;
+  End;
+  
+Begin
+  
+  Select * Into r_Pf_Rb_Registration_Books
+    From Pf_Rb_Registration_Books t
+    Where t.Registration_Id = p_Registration_Id;
+ --
+  If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('50') Or r_Pf_Rb_Registration_Books.Status = '01' And Core_Env.Get_Env('USER_ID') = 4832 /*KAMOLIDDIN*/Then
+     Null;
+  Else   
+    If r_Pf_Rb_Registration_Books.Application_Id Is Null And r_Pf_Rb_Registration_Books.Prev_Application_Id Is Null
+    Then
+      -- Прикрепляем персону к регистрации
+      If r_Pf_Rb_Registration_Books.Person_Id Is Null Or r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+        r_Pf_Rb_Registration_Books.Person_Id := Add_PF_Person(o_Out_Text, v_Focus_Item, r_Pf_Rb_Registration_Books);
+        If r_Pf_Rb_Registration_Books.Person_Id = 0 Then
+          Rollback;
+          Return 0;
+        Else
+          Update Pf_Rb_Registration_Books t
+            Set t.Person_Id = r_Pf_Rb_Registration_Books.Person_Id
+            Where t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id;
+        End If;  
+      End If;
+    End If;
+
+    -- Адрес
+    If r_Pf_Rb_Registration_Books.Person_Address_Id Is Null Then
+      If Core_Util.Get_Exists_Row(
+         p_Table     => 'Pf_Rb_Person_Addresses t',
+         p_Where     => 't.Registration_Id = :1',
+         p_Arg1      => r_Pf_Rb_Registration_Books.Registration_Id,
+         p_Arg_Count => 1) > 0
+      Then
+        r_Pf_Rb_Registration_Books.Person_Address_Id := Add_PF_Address(o_Out_Text, v_Focus_Item, p_Registration_Id);
+        If r_Pf_Rb_Registration_Books.Person_Address_Id = 0 Then
+          Rollback;
+          Return 0;
+        End If;
+      End If;
+    End If;
+    
+    -- Проверка заявлений на персону
+    --v_Return := Pf_Reg_Books_2.Check_Person_App(o_Out_Text, r_Pf_Rb_Registration_Books);
+    If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('03','06', '16', '18', '23', '26', '28', '29') Then
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('03') And r_Pf_Rb_Registration_Books.Is_Dependent_App = 'Y' Then
+        Null;
+      Else
+        -- Проверка заявлений на иждевенца
+        If Pf_Reg_Books_2.Check_Dependent_App(o_Out_Text, r_Pf_Rb_Registration_Books) = 0 Then
+          Return 0;
+        End If;
+
+        -- Проверка заявлений на кормильца
+      End If;
+    End If;
+    
+    -- заявлениe
+    If r_Pf_Rb_Registration_Books.Prev_Application_Id Is Not Null Then
+      Select t.* Into r_Prev_Applications
+        From Pf_Applications t
+        Where t.Application_Id = r_Pf_Rb_Registration_Books.Prev_Application_Id;
+    End If;
+    --
+    Select Nvl(t.Application_Type, r_Pf_Rb_Registration_Books.New_Application_Type), t.Is_New_Case_Flag 
+      Into r_Pf_Applications.Application_Type, v_New_Case
+      From PF_RB_S_TYPES t 
+      Where t.Code = r_Pf_Rb_Registration_Books.Registration_Type_Code;
+    If r_Pf_Rb_Registration_Books.Registration_Type_Code = '22' Then
+       If pf_utils.Is_Doc_List_Exist(p_Application_Id => r_Prev_Applications.Application_Id ) = 1 Then
+        --menimcha kerakmas; Select * From pf_persons p Where p.person_id = r_Prev_Applications.Person_Id;
+        Begin
+         Select d.death_date Into v_death_date From pf_rb_attached_docs d Where d.registration_id = r_Pf_Rb_Registration_Books.Registration_Id 
+                                           And d.doc_type_code = '06'; -- dlya polucheniya dati smerti
+        Exception When Others Then
+          o_Out_Text := 'Data smerti topilmadi';
+          Return 0;
+        End;
+        Begin
+           -- mesto viplata nalichka yest/net
+                       
+          Select z.detail_shipment_id Into v_shipment_detail_id          
+          from Pf_Pens_Shipments d,
+               Pf_Pens_Shipment_Details z,
+               Pf_s_Payment_Place_Types f
+            Where d.Application_Id = r_Prev_Applications.Application_Id
+              And d.Person_Id = r_Prev_Applications.Person_Id
+              And v_death_date Between d.Begin_Date And d.End_Date
+              And d.shipment_id = z.shipment_id
+              And f.Code = z.Place_Code
+              And z.place_code = '01' -- naqd pull
+              ;
+        Exception When no_data_found Then 
+           Begin
+             --- karta bolishi mumkin va vedomost vafot etgan oy uchun tuzilmagan bolishi mumkin shularga tekshiramiz
+             Select dl.paid_status Into v_paid_status From pf_doc_lists dl Where 
+                         dl.application_id = r_Prev_Applications.Application_Id 
+                        And dl.period_code = to_char(v_death_date,'yyyy/mm')
+                      ;
+           If  v_paid_status <> '02' And v_paid_status Is Not Null Then
+               o_Out_Text := 'To''lov amalga oshirilmagan yoki mazkur oy uchun pensiya to''langan!';
+               Return 0;
+           End If;
+           
+           Exception When no_data_found Then
+             Null;
+           End;
+         When too_many_rows Then
+           Null;
+          When Others Then
+           o_Out_Text := 'To''lovlar bilan xatolik bor!!';
+           Return 0;
+        End;
+         -- shipment_detail_id
+         Begin
+             Select dl.paid_status Into v_paid_status From pf_doc_lists dl Where dl.application_id = r_Prev_Applications.Application_Id 
+                      And dl.detail_shipment_id = v_shipment_detail_id 
+                      And dl.period_code = to_char(v_death_date,'yyyy/mm')
+                      ; -- oplata ne oplata nalichki
+                      
+             If  v_paid_status <> '02' And v_paid_status Is Not Null Then
+               o_Out_Text := 'To''lov amalga oshirilmagan yoki mazkur oy uchun pensiya to''langan!!';
+               Return 0;
+             End If;
+         Exception 
+           When too_many_rows Then
+             o_Out_Text := 'To''lovlar bilan xatolik bor(vedomost)!!';
+             Return 0;
+           When Others Then
+            Null;
+         End;
+         
+         
+       End If;        
+     End If; 
+    
+     -- В случае отрицательного решения заявитель может пройти новую регистрацию только через 10 дней.    
+    
+    If r_Pf_Rb_Registration_Books.Registration_Type_Code = '01' Then
+      
+      Declare
+        v_Cnt_Refus Integer;
+      Begin
+        
+        Select Count(Distinct t.Application_Id) Into v_Cnt_Refus
+          From Pf_Applications t, Pf_Persons p, Pf_Application_Protocols pr
+         Where t.Person_id = p.Person_id
+           And t.Application_id = pr.Application_id
+           And t.Application_Reason = 'NEW'
+           And t.Status_Code = '08'
+           -------------- Itsm 16975
+           And (Trunc(Sysdate) - pr.Protocol_Date) < 10
+           -------------- Itsm 16975
+           --если не изменится его возраст
+           And Pf_Calc_Rights.Get_Person_Age(p.Person_id, t.Registered_Date) = Pf_Calc_Rights.Get_Person_Age(p.Person_id, Sysdate)
+           And p.Pinpp = r_Pf_Rb_Registration_Books.Pinpp;
+      
+        If v_Cnt_Refus > 0 Then
+          o_Out_Text := 'У вас имеется заявление с отрицательным решением. Обратитесь в Пенсионный фонд.';
+          Return 0;
+        End If;
+        
+      Exception
+        When Others Then
+          Null;
+      End;
+    End if;
+     
+    If v_New_Case = 'Y' Then   
+      r_Pf_Applications.Application_Id            := Pf_Applications_Sq.Nextval;
+      r_Pf_Applications.Person_Id                 := r_Pf_Rb_Registration_Books.Person_Id;
+      r_Pf_Applications.Sobes_Org_id              := r_Pf_Rb_Registration_Books.Sobes_Org_Id;
+      r_Pf_Applications.Application_Reason        := Nvl(r_Pf_Rb_Registration_Books.Application_Reason, 'NEW');
+      r_Pf_Applications.Registered_Date           := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+      r_Pf_Applications.Registered_Num            := To_Char(r_Pf_Rb_Registration_Books.Org_Registration_Id);
+      r_Pf_Applications.Registered_By             := v_User_Id;
+      r_Pf_Applications.Status_Code               := '01';
+      r_Pf_Applications.Close_Date                := Pf_Const.c_Default_Max_Date;
+      r_Pf_Applications.Recalc_Date               := Trunc(Nvl(r_Prev_Applications.Recalc_Date, r_Pf_Rb_Registration_Books.Registration_Date));
+      r_Pf_Applications.Pay_Status_Code           := '01';
+      r_Pf_Applications.Is_Exist_Flag             := 'N';
+      r_Pf_Applications.Close_Reason              := '00';
+      r_Pf_Applications.Open_Date                 := Trunc(r_Pf_Rb_Registration_Books.Registration_Date) + 1;
+      r_Pf_Applications.Is_Restore_Flag           := 'N';
+      r_Pf_Applications.Created_By                := r_Pf_Applications.Registered_By;
+      r_Pf_Applications.Creation_Date             := Sysdate;
+      r_Pf_Applications.Last_Updated_By           := r_Pf_Applications.Registered_By;
+      r_Pf_Applications.Last_Update_Date          := Sysdate;
+      --
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code = '08' Then
+        r_Pf_Applications.Case_Number               := r_Prev_Applications.Case_Number;
+        r_Pf_Applications.Case_Number_Old           := r_Prev_Applications.Case_Number_Old;
+        r_Pf_Applications.Application_Type          := r_Prev_Applications.Application_Type;
+        r_Pf_Applications.Ref_Application_Id        := r_Prev_Applications.Application_Id;
+        r_Pf_Applications.Registered_Date           := r_Prev_Applications.Registered_Date;
+        r_Pf_Applications.Registered_Num            := r_Prev_Applications.Registered_Num;
+        --
+        r_Pf_Applications.Recalc_Date               := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+        r_Pf_Applications.Restoration_Date          := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+      Elsif r_Pf_Rb_Registration_Books.Registration_Type_Code = '07' Then
+        r_Pf_Applications.Case_Number               := r_Prev_Applications.Case_Number;
+        r_Pf_Applications.Case_Number_Old           := r_Prev_Applications.Case_Number_Old;
+        r_Pf_Applications.Application_Type          := r_Pf_Rb_Registration_Books.New_Application_Type;
+        r_Pf_Applications.Ref_Application_Id        := r_Prev_Applications.Application_Id;
+        r_Pf_Applications.Registered_Date           := r_Prev_Applications.Registered_Date;
+        r_Pf_Applications.Registered_Num            := r_Prev_Applications.Registered_Num;
+        r_Pf_Applications.Recalc_Date               := r_Prev_Applications.Recalc_Date;
+        --
+        If r_Pf_Rb_Registration_Books.Application_Reason = 'DOC' Then
+          -- Перерасчет по причине предоставления доп. документов
+          r_Pf_Applications.Recalc_Date             := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+        Elsif r_Pf_Rb_Registration_Books.Application_Reason = 'CHANG' Then
+          -- Перерасчет по причине изменения вида пенсии
+          r_Pf_Applications.Registered_Date         := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+          r_Pf_Applications.Recalc_Date             := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+        Elsif r_Pf_Rb_Registration_Books.Application_Reason = 'RESUM' Then
+          r_Pf_Applications.Recalc_Date             := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+          r_Pf_Applications.Restoration_Date        := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+        Elsif r_Pf_Rb_Registration_Books.Application_Reason = 'LEAVE' Then
+          r_Pf_Applications.Recalc_Date             := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+          r_Pf_Applications.Restoration_Date        := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+          Select Pf_Case_Numbers_All_Sq.Nextval Into r_Pf_Applications.Case_Number From Dual;
+        Elsif r_Pf_Rb_Registration_Books.Application_Reason = 'MIGR' Then
+          r_Pf_Applications.Registered_Date         := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+          r_Pf_Applications.Recalc_Date             := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+          r_Pf_Applications.Registered_Num          := r_Pf_Rb_Registration_Books.Org_Registration_Id;
+        Elsif r_Pf_Rb_Registration_Books.Application_Reason = 'ADD' Then
+          r_Pf_Applications.Recalc_Date             := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+          r_Pf_Applications.Registered_Num          := r_Pf_Rb_Registration_Books.Org_Registration_Id;
+        End If;
+      Elsif r_Pf_Rb_Registration_Books.Registration_Type_Code = '22' Then
+        --Заявление на получение пенсии и пособий недополученной пенсионером в связи со смертью
+        r_Pf_Applications.Person_Id                 := r_Prev_Applications.Person_Id;
+        r_Pf_Applications.Case_Number               := r_Prev_Applications.Case_Number;
+        r_Pf_Applications.Case_Number_Old           := r_Prev_Applications.Case_Number_Old;
+        r_Pf_Applications.Ref_Application_Id        := r_Prev_Applications.Application_Id;
+        --
+        r_Pf_Applications.Registered_Date           := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+        r_Pf_Applications.Registered_Num            := r_Pf_Rb_Registration_Books.Org_Registration_Id;
+        r_Pf_Applications.Recalc_Date               := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+      Elsif r_Pf_Rb_Registration_Books.Registration_Type_Code = '40' Then
+          --Заявление на восстановление пенсии(МСО)
+        Select Pf_Case_Numbers_All_Sq.Nextval       Into r_Pf_Applications.Case_Number From Dual;
+        r_Pf_Applications.Application_Reason        := 'RESUM';
+        r_Pf_Applications.Registered_Date           := r_Pf_Rb_Registration_Books.Registered_Date_Mso;
+        r_Pf_Applications.Recalc_Date               := Trunc(r_Pf_Rb_Registration_Books.Registration_Date);
+      Else
+        Select Pf_Case_Numbers_All_Sq.Nextval Into r_Pf_Applications.Case_Number From Dual;
+      End If;
+      --
+      
+      If r_Pf_Applications.Ref_Application_Id Is Not Null 
+      And r_Prev_Applications.Status_Code Not In ('07', '08', '13') Then
+        o_Out_Text := o_Out_Text || ' Неверно выбрано предыдущее заявление. ';
+        Rollback;
+        Return 0;
+      End If;
+      
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code = '07' Then
+        Begin
+        
+          Select a.application_id
+            into r_Prev_Applications.Application_Id
+            From Pf_Applications a
+           Where a.Application_Id = r_Prev_Applications.Application_Id
+             And a.Status_Code = '07'
+             and a.close_reason = '00'
+             and a.close_date > sysdate;
+        
+          select t.prev_app_close_reason
+            into v_App_Close_Reason
+            from pf_s_app_close_reason_sets t
+           where t.new_application_type = r_Pf_Applications.Application_Type
+             and t.new_application_reason = r_Pf_Applications.Application_Reason;
+        
+          If Pf_Addition_Compensation.Edit_Calc_Pens_Code_Status(o_Out_Text       => o_Out_Text,
+                                                                 o_Focus_Item     => v_Focus_Item,
+                                                                 p_Application_Id => r_Prev_Applications.Application_Id,
+                                                                 p_Status         => Pf_Const.c_Pens_Status_Close,
+                                                                 p_Begin_Date     => sysdate,
+                                                                 p_Add_Info       => '',
+                                                                 p_Close_Reason   => v_App_Close_Reason,
+                                                                 p_Is_Commit      => 'N') = 1 Then
+          
+            insert into pf_app_auto_close_history
+            values
+              (r_Pf_Applications.Application_Id,
+               r_Prev_Applications.Application_Id,
+               NVL(Core_Env.Get_Env('USER_ID'),1),
+               sysdate);
+          Else
+            Rollback;
+            Return 0;
+          end if;
+        
+        Exception
+          when others then
+            null;
+        End;
+        
+      End If;
+
+      Insert Into Pf_Applications Values r_Pf_Applications;
+      --
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code = '22' Then
+        Insert Into Pf_Recipients(Recipient_Id, Application_Id, Person_Id, Created_By, Creation_Date, Last_Updated_By, Last_Update_Date)
+          Values (Pf_Recipients_Sq.Nextval, r_Pf_Applications.Application_Id, r_Pf_Rb_Registration_Books.Person_Id, 
+                 r_Pf_Applications.Created_By, r_Pf_Applications.Creation_Date, r_Pf_Applications.Last_Updated_By, r_Pf_Applications.Last_Update_Date);
+      End If;
+
+      r_Pf_Rb_Registration_Books.Application_Id := r_Pf_Applications.Application_Id;
+
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('07','08') Then
+        Pf_Application.Copy_Application(o_Out_Text              => o_Out_Text,
+                                        p_Source_Application_Id => r_Pf_Rb_Registration_Books.Prev_Application_Id,
+                                        p_Source_Person_Id      => r_Pf_Rb_Registration_Books.Person_Id,
+                                        p_Dest_Application_Id   => r_Pf_Applications.Application_Id);
+        --
+        If o_Out_Text Is Not Null Then
+          Rollback;
+          Return 0;
+        End If;
+        --
+
+        If r_Pf_Rb_Registration_Books.Registration_Type_Code In ('07') Then
+          -- Документы
+          Insert Into Pf_Case_Docs(Doc_Id, Application_Id, Doc_Type,
+                                   Add_Info, File_Id, Doc_Series,
+                                   Doc_Number, Doc_Org_Give, Doc_Date_Give,
+                                   Created_By, Creation_Date, 
+                                   Last_Updated_By, Last_Update_Date,
+                                   Organization_Id, Death_Date, Begin_Date,
+                                   End_Date, Reg_Number, Person_Pin, Is_Auto_Flag)
+                 Select            t.Doc_Id, r_Pf_Rb_Registration_Books.Application_Id, t.Doc_Type_Code,
+                                   Null, t.File_Id, t.Doc_Series,
+                                   t.Doc_Number, t.Doc_Org_Give, t.Doc_Date_Give,
+                                   v_User_Id, Sysdate,
+                                   v_User_Id, Sysdate,
+                                   t.Organization_Id, t.Death_Date, t.Begin_Date,
+                                   t.End_Date, t.Reg_Number, t.Pinpp, t.Is_Auto_Flag
+                   From Pf_Rb_Attached_Docs t Where t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id;
+
+          -- Справки ВТЭК
+          If r_Pf_Rb_Registration_Books.New_Application_Type In (/*'01', '03',*/ '18', '19', '26', '28', '29') Then
+            v_Where := 't.Registration_Type_Code = :1 And t.Doc_Type_Code In (''14'', ''20'')';
+          Else
+            v_Where := 't.Registration_Type_Code = :1 And t.Doc_Type_Code In (''14'', ''20'') And t.Is_Obligatory_Flag = ''Y''';
+          End If;
+--          v_Where := 't.Registration_Type_Code = :1 And t.Doc_Type_Code In (''14'', ''20'')';
+          
+          If Core_Util.Get_Exists_Row(
+             p_Table     => 'Pf_Rb_s_Attached_Docs t',
+             p_Where     => v_Where,
+             p_Arg1      => r_Pf_Rb_Registration_Books.New_Application_Type,--r_Pf_Rb_Registration_Books.Registration_Type_Code,
+             p_Arg_Count => 1) > 0
+          Then
+            --Begin
+            For K In (
+              Select t.Doc_Series,
+                     t.Doc_Number,
+                     t.Begin_Date,
+                     t.Disability_Group,
+                     t.Disability_Reason,
+                     t.Disability_Percentage,
+                     t.End_Date,
+                     Case When t.Doc_Type_Code = '14' Then '01' Else '02' End Doc_Type_Code,
+                     289 Vtek_Id, 
+                     t.Disabilitydate
+                From Pf_Rb_Attached_Docs t
+                Where t.Doc_Type_Code In ('14','20')
+                      And t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id
+            ) Loop
+              --
+              r_Pf_Vtek_Docs.Vtek_Doc_Id       := Pf_Vtek_Docs_Sq.Nextval;
+              r_Pf_Vtek_Docs.vtek_doc_serya    := K.Doc_Series;
+              r_Pf_Vtek_Docs.vtek_doc_number   := K.Doc_Number;
+              r_Pf_Vtek_Docs.vtek_doc_reg_date := K.Begin_Date;
+              r_Pf_Vtek_Docs.invalid_group     := K.Disability_Group;
+              r_Pf_Vtek_Docs.invalid_reason    := K.Disability_Reason;
+              r_Pf_Vtek_Docs.invalid_percent   := K.Disability_Percentage;
+              r_Pf_Vtek_Docs.invalid_exp_date  := K.End_Date;
+              r_Pf_Vtek_Docs.doc_type          := K.Doc_Type_Code;
+              r_Pf_Vtek_Docs.Vtek_Id           := K.Vtek_Id;
+
+              r_Pf_Vtek_Docs.Is_Auto_Flag     := 'Y';
+              r_Pf_Vtek_Docs.Application_Id   := r_Pf_Applications.Application_Id;
+              r_Pf_Vtek_Docs.Created_By       := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+              r_Pf_Vtek_Docs.Last_Updated_By  := r_Pf_Vtek_Docs.Created_By;
+              r_Pf_Vtek_Docs.Creation_Date    := Sysdate;
+              r_Pf_Vtek_Docs.Last_Update_Date := r_Pf_Vtek_Docs.Creation_Date;
+              --
+             
+              If K.disabilitydate Is Not Null Then
+                r_Pf_Vtek_Docs.Vtek_Date := K.Disabilitydate;
+              Else 
+                o_Out_Text := o_Out_Text || 'a)Не указана дата первичной регистрации ВТЭК!';
+                Rollback;
+                Return 0;
+              End If;
+     /*         Begin --------------по 5 заявке (где путаются даты первичного обращения ВТЭК и даты регистрации справки)
+                          Select rmv.disabilitydate
+                                     Into r_Pf_Vtek_Docs.Vtek_Date
+                                  From  PF_RECV_MH_VTEK rmv
+                                        Join Pf_Persons pers On pers.pinpp = rmv.person_pin
+                                             Or (pers.PASSPORT_SERIES = rmv.person_passport_seria 
+                                                  And pers.PASSPORT_Number = rmv.person_passport_number)
+                                  Where rmv.status = '06'
+                                        And rmv.disabilitydate is not null                               
+                                        And pers.person_id = r_Pf_Rb_Registration_Books.Person_Id
+                                        And rownum = 1;
+                       Exception When Others Then        
+                                begin 
+                                    Select rmv.disabilitydate
+                                             Into r_Pf_Vtek_Docs.Vtek_Date
+                                          From  PF_RECV_MH_VTEK rmv                                  
+                                          Where rmv.status = '06'
+                                                And rmv.disabilitydate is not null  
+                                                and rmv.person_pin = (select rt.disability_pinpp 
+                                                                             from PF_EXCHANGE_MH_GRANT_RECV rt
+                                                                      where rt.registration_id = p_Registration_Id 
+                                                                            
+                                                                            )                             
+                                               
+                                                And rownum = 1;
+                                  exception when others then
+                                      Begin 
+                                      Select rmv.disabilitydate
+                                               Into r_Pf_Vtek_Docs.Vtek_Date
+                                            From  PF_RECV_MH_VTEK rmv                                  
+                                            Where rmv.status = '06'
+                                                  And rmv.disabilitydate is not null  
+                                                  and rmv.person_pin In (select dt.pinpp From Pf_Rb_Dependents dt 
+                                                                               Where dt.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id)                             
+                                                 
+                                                  And rownum = 1;
+                                    Exception When Others Then            
+                                        o_Out_Text := o_Out_Text || '1. Не указана дата первичной регистрации ВТЭК(утверждение регистрации)!';
+                                        Rollback;
+                                        Return 0;
+                                    End; 
+                                  end;       
+                                
+                       End;*/
+              --
+              Insert Into Pf_Vtek_Docs Values r_Pf_Vtek_Docs;
+              v_Cnt := v_Cnt + 1;
+            End Loop;
+           /* If v_Cnt = 0 Then
+            --Exception When Others Then
+              o_Out_Text := '8.Электронная справка ВСЭК не отправлена в Пенсионный фонд. Просим обратиться в ВСЭК ( врачебно социальная экспертная коммисия) ' || Core_Const.c_New_Line;
+              o_Out_Text := o_Out_Text || 'TIEK elektron ma''lumoti Pensiya jamg''armasiga yuborilmagan. TIEK (tibbiy ijtimoiy ekspertiza komissiyasiga) murojaat qilishingizni so''raymiz.';
+              Rollback;
+              Return 0;
+            --End;
+            End If;*/
+          End If;
+
+        End If;
+
+      Else
+    -- Документы
+   select * Bulk Collect Into m_Pf_Rb_Attached_Docs
+     From Pf_Rb_Attached_Docs t 
+    Where t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id;
+
+   Forall i In  m_Pf_Rb_Attached_Docs.First .. m_Pf_Rb_Attached_Docs.Last
+   
+        Insert Into Pf_Case_Docs(Doc_Id, Application_Id, Doc_Type,
+                                 Add_Info, File_Id, Doc_Series,
+                                 Doc_Number, Doc_Org_Give, Doc_Date_Give,
+                                 Created_By, Creation_Date, 
+                                 Last_Updated_By, Last_Update_Date,
+                                 Organization_Id, Death_Date, Begin_Date,
+                                 End_Date, Reg_Number, Person_Pin, Is_Auto_Flag)
+            values(m_Pf_Rb_Attached_Docs(i).Doc_Id, r_Pf_Rb_Registration_Books.Application_Id, 
+                   m_Pf_Rb_Attached_Docs(i).Doc_Type_Code, Null, m_Pf_Rb_Attached_Docs(i).File_Id, 
+                   m_Pf_Rb_Attached_Docs(i).Doc_Series, m_Pf_Rb_Attached_Docs(i).Doc_Number, 
+                   m_Pf_Rb_Attached_Docs(i).Doc_Org_Give, m_Pf_Rb_Attached_Docs(i).Doc_Date_Give,
+                   v_User_Id, Sysdate, v_User_Id, Sysdate, m_Pf_Rb_Attached_Docs(i).Organization_Id, 
+                   m_Pf_Rb_Attached_Docs(i).Death_Date, m_Pf_Rb_Attached_Docs(i).Begin_Date,
+                   m_Pf_Rb_Attached_Docs(i).End_Date, m_Pf_Rb_Attached_Docs(i).Reg_Number, 
+                   m_Pf_Rb_Attached_Docs(i).Pinpp, m_Pf_Rb_Attached_Docs(i).Is_Auto_Flag);
+                       
+      -- Иждевенцы
+  Select t.* Bulk Collect Into m_Pf_Rb_Dependents   
+    From Pf_Rb_Dependents t 
+   Where t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id;
+   
+   Forall i In  m_Pf_Rb_Dependents.First .. m_Pf_Rb_Dependents.Last
+        
+        Insert Into Pf_Dependents(Dependent_Id, Application_Id, Name, Birth_Date, 
+                                  Family_Relation_Code, End_Date, Is_Orphan_Flag, Is_Invalid_Flag,
+                                  Created_By, Creation_Date, Last_Updated_By, Last_Update_Date,
+                                  Sobes_Org_Id, Shared_App_Id, Shared_Dependent_Id, Source_App_Id, 
+                                  Source_Dependent_Id, Pinpp, Is_Auto_Flag)
+              values(m_Pf_Rb_Dependents(i).Rb_Dependent_Id, r_Pf_Rb_Registration_Books.Application_Id, 
+                     m_Pf_Rb_Dependents(i).Name, m_Pf_Rb_Dependents(i).Birth_Date,
+                     Case When Substr(m_Pf_Rb_Dependents(i).Pinpp,1,1) In ('3','5') Then '02' Else '01' End,
+                     m_Pf_Rb_Dependents(i).End_Date, m_Pf_Rb_Dependents(i).Is_Orphan_Flag,
+                     m_Pf_Rb_Dependents(i).Is_Invalid_Flag, v_User_Id, Sysdate, v_User_Id, Sysdate,
+                     Null, Null, Null, Null, Null, m_Pf_Rb_Dependents(i).Pinpp, 'Y');
+
+      -- Кормильцы
+  select * Bulk Collect Into m_Pf_Rb_Breadwinners
+    From Pf_Rb_Breadwinners t 
+   Where t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id;
+           
+   Forall i In  m_Pf_Rb_Breadwinners.First .. m_Pf_Rb_Breadwinners.Last
+ 
+        Insert Into Pf_Breadwinners(Breadwinner_Id,
+                                    Person_Id,
+                                    Application_Id,
+                                    Is_First_Flag,
+                                    Invalid_Date,
+                                    Created_By,
+                                    Creation_Date,
+                                    Last_Updated_By,
+                                    Last_Update_Date,
+                                    Pension_Date,
+                                    Is_Child_Inv_Flag,
+                                    Is_Date_Begin_Flag,
+                                    Is_Auto_Flag,
+                                    Pinpp,
+                                    Recv_Application_Id)
+               values(m_Pf_Rb_Breadwinners(i).Rb_Breadwinner_Id, 
+                      m_Pf_Rb_Breadwinners(i).Person_Id, 
+                      r_Pf_Rb_Registration_Books.Application_Id,
+                      m_Pf_Rb_Breadwinners(i).Is_First_Flag,
+                      m_Pf_Rb_Breadwinners(i).Invalid_Date,
+                      1,sysdate,1,sysdate,
+                      m_Pf_Rb_Breadwinners(i).Pension_Date,
+                      m_Pf_Rb_Breadwinners(i).Is_Child_Inv_Flag,
+                      m_Pf_Rb_Breadwinners(i).Is_Date_Begin_Flag,
+                      'Y',m_Pf_Rb_Breadwinners(i).Pinpp,
+                      m_Pf_Rb_Breadwinners(i).Recv_Application_Id);
+                
+        -- Справки ВТЭК
+        If r_Pf_Rb_Registration_Books.Registration_Type_Code In (/*'01', '03',*/ '18', '19', '26', '28', '29') Then
+          v_Where := 't.Registration_Type_Code = :1 And t.Doc_Type_Code In (''14'', ''20'')';
+        Else
+          v_Where := 't.Registration_Type_Code = :1 And t.Doc_Type_Code In (''14'', ''20'') And t.Is_Obligatory_Flag = ''Y''';
+        End If;
+
+        If Core_Util.Get_Exists_Row(
+           p_Table     => 'Pf_Rb_s_Attached_Docs t',
+           p_Where     => v_Where,
+           p_Arg1      => r_Pf_Rb_Registration_Books.Registration_Type_Code,
+           p_Arg_Count => 1) > 0
+        Then
+          --Begin
+          For K In (
+            Select t.Doc_Series,
+                   t.Doc_Number,
+                   t.Begin_Date,
+                   t.Disability_Group,
+                   t.Disability_Reason,
+                   t.Disability_Percentage,
+                   t.End_Date,
+                   Case When t.Doc_Type_Code = '14' Then '01' Else '02' End Doc_Type_Code,
+                   289 Vtek_Id,
+                   t.disabilitydate
+              From Pf_Rb_Attached_Docs t
+              Where t.Doc_Type_Code In ('14','20')
+                    And t.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id
+          ) Loop
+            --
+            r_Pf_Vtek_Docs.Vtek_Doc_Id       := Pf_Vtek_Docs_Sq.Nextval;
+            r_Pf_Vtek_Docs.vtek_doc_serya    := K.Doc_Series;
+            r_Pf_Vtek_Docs.vtek_doc_number   := K.Doc_Number;
+            r_Pf_Vtek_Docs.vtek_doc_reg_date := K.Begin_Date;
+            r_Pf_Vtek_Docs.invalid_group     := K.Disability_Group;
+            r_Pf_Vtek_Docs.invalid_reason    := K.Disability_Reason;
+            r_Pf_Vtek_Docs.invalid_percent   := K.Disability_Percentage;
+            r_Pf_Vtek_Docs.invalid_exp_date  := K.End_Date;
+            r_Pf_Vtek_Docs.doc_type          := K.Doc_Type_Code;
+            r_Pf_Vtek_Docs.Vtek_Id           := K.Vtek_Id;
+
+            r_Pf_Vtek_Docs.Is_Auto_Flag     := 'Y';
+            r_Pf_Vtek_Docs.Application_Id   := r_Pf_Applications.Application_Id;
+            r_Pf_Vtek_Docs.Created_By       := Nvl(Core_Env.Get_Env('USER_ID'), 1);
+            r_Pf_Vtek_Docs.Last_Updated_By  := r_Pf_Vtek_Docs.Created_By;
+            r_Pf_Vtek_Docs.Creation_Date    := Sysdate;
+            r_Pf_Vtek_Docs.Last_Update_Date := r_Pf_Vtek_Docs.Creation_Date;
+            --
+            If K.disabilitydate Is Not Null Then
+              r_Pf_Vtek_Docs.Vtek_Date := K.Disabilitydate;
+            Else 
+              o_Out_Text := o_Out_Text || 'Не указана дата первичной регистрации ВТЭК!';
+              Rollback;
+              Return 0;
+            End If;
+           
+			
+   /*           Begin --------------5HD заявка, где копируется дата первичного обращения ВТЭК
+                            Select rmv.disabilitydate
+                                       Into r_Pf_Vtek_Docs.Vtek_Date
+                                    From  PF_RECV_MH_VTEK rmv
+                                          Join Pf_Persons pers On pers.pinpp = rmv.person_pin
+                                               Or (pers.PASSPORT_SERIES = rmv.person_passport_seria 
+                                                    And pers.PASSPORT_Number = rmv.person_passport_number)
+                                    Where rmv.status = '06'
+                                          And rmv.disabilitydate is not null                               
+                                          And pers.person_id = r_Pf_Rb_Registration_Books.Person_Id
+                                          And rownum = 1;
+                         Exception When Others Then 
+                           
+                            begin 
+                              Select rmv.disabilitydate
+                                       Into r_Pf_Vtek_Docs.Vtek_Date
+                                    From  PF_RECV_MH_VTEK rmv                                  
+                                    Where rmv.status = '06'
+                                          And rmv.disabilitydate is not null  
+                                          and rmv.person_pin = (select rt.disability_pinpp 
+                                                                       from PF_EXCHANGE_MH_GRANT_RECV rt
+                                                                where rt.registration_id = p_Registration_Id 
+                                                                      
+                                                                      )                             
+                                         
+                                          And rownum = 1;
+                            exception when others then
+                                   Begin 
+                                        Select rmv.disabilitydate
+                                                 Into r_Pf_Vtek_Docs.Vtek_Date
+                                              From  PF_RECV_MH_VTEK rmv                                  
+                                              Where rmv.status = '06'
+                                                    And rmv.disabilitydate is not null  
+                                                    and rmv.person_pin In (select dt.pinpp From Pf_Rb_Dependents dt 
+                                                                                 Where dt.Registration_Id = r_Pf_Rb_Registration_Books.Registration_Id)                             
+                                                   
+                                                    And rownum = 1;
+                                      Exception When Others Then            
+                                          o_Out_Text := o_Out_Text || '1. Не указана дата первичной регистрации ВТЭК(утверждение регистрации)!';
+                                          Rollback;
+                                          Return 0;
+                                      End; 
+                            end;       
+                                  
+                    End; */
+            --
+            Insert Into Pf_Vtek_Docs Values r_Pf_Vtek_Docs;
+            v_Cnt := v_Cnt + 1;
+          End Loop;
+          If v_Cnt = 0 Then
+          --Exception When Others Then
+            o_Out_Text := '8.Электронная справка ВСЭК не отправлена в Пенсионный фонд. Просим обратиться в ВСЭК ( врачебно социальная экспертная коммисия) ' || Core_Const.c_New_Line;
+            o_Out_Text := o_Out_Text || 'TIEK elektron ma''lumoti Pensiya jamg''armasiga yuborilmagan. TIEK (tibbiy ijtimoiy ekspertiza komissiyasiga) murojaat qilishingizni so''raymiz.';
+            Rollback;
+            Return 0;
+          --End;
+          End If;
+        End If;
+
+      End If;
+    Else 
+      If r_Pf_Rb_Registration_Books.Registration_Type_Code <> '14' Then
+        If r_Pf_Rb_Registration_Books.Prev_Application_Id Is Null Then 
+          o_Out_Text := 'Заявление не указано.';
+          Rollback;
+          Return 0;
+        End If;
+        Update Pf_Applications t
+           Set t.Status_Code = '01',
+               t.Last_Updated_By = v_User_Id,
+               t.Last_Update_Date = Sysdate
+          Where t.Application_Id = r_Pf_Rb_Registration_Books.Application_Id;
+      End If;
+    End If;
+  End If;  
+  -- Изменение статуса
+  r_Pf_Rb_Registration_Books.Status             := Case When r_Pf_Rb_Registration_Books.Registration_Type_Code = '50' Or r_Pf_Rb_Registration_Books.Status = '01' And Core_Env.Get_Env('USER_ID') = 4832 Then '02' Else '01' End;
+  r_Pf_Rb_Registration_Books.Approved_By        := v_User_Id;
+  r_Pf_Rb_Registration_Books.Approved_Date      := Sysdate;
+  r_Pf_Rb_Registration_Books.Change_Status_By   := v_User_Id;
+  r_Pf_Rb_Registration_Books.Change_Status_Date := Sysdate;
+  
+  Update Pf_Rb_Registration_Books t
+    Set Row = r_Pf_Rb_Registration_Books
+    Where t.Registration_Id = p_Registration_Id;
+  --
+  Person_Notif;
+  --
+  o_Out_Text := Core_Lang.Get_All_Msg(Core_Const.c_Appl_Code, 'SAVE_SUCCESS');
+  Commit;
+  Return r_Pf_Applications.Application_Id;
+Exception
+  When Others Then
+    Rollback;
+    Core_Util.Get_Error_Message(
+      o_Out_Text, Pf_Const.c_Appl_Code,
+      p_Module_Type => Core_Lang.c_Module_Type_Ora_Prc,
+      p_Module_Name => c_Module_Name,
+      p_Msg_Code => 'SAVE_ERROR'
+    );
+    Return 0;
+End Approve_Registration;
+
+

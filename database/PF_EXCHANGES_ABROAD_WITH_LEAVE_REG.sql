@@ -1,0 +1,382 @@
+-- ============================================================================
+-- Enhanced Restore_Person_Status Function with LEAVE Registration
+-- ============================================================================
+-- This function now:
+-- 1. Checks if person has arrived back to Uzbekistan
+-- 2. Restores the person (removes close flags from Pf_Persons)
+-- 3. Creates a LEAVE registration in Pf_Rb_Registration_Books (type '07')
+-- 4. This registration will later be sent and approved to create Pf_Applications
+
+CREATE OR REPLACE PACKAGE BODY PF_EXCHANGES_ABROAD IS
+
+    -- ========================================================================
+    -- Helper function: Ensure JSON element (Number)
+    -- ========================================================================
+    FUNCTION Ensure_Json_Element(P_Val NUMBER, P_Alt VARCHAR2 := '""')
+    RETURN VARCHAR2 IS
+    BEGIN
+        RETURN CASE
+                   WHEN P_Val IS NOT NULL AND P_Val != TO_CHAR(0) THEN TO_CHAR(P_Val)
+                   ELSE P_Alt
+               END;
+    END Ensure_Json_Element;
+
+    -- ========================================================================
+    -- Helper function: Ensure JSON element (Varchar2)
+    -- ========================================================================
+    FUNCTION Ensure_Json_Element(P_Val VARCHAR2, P_Alt VARCHAR2 := '""', P_Quote BOOLEAN := TRUE)
+    RETURN VARCHAR2 IS
+    BEGIN
+        RETURN CASE
+                   WHEN P_Val IS NOT NULL AND P_Val != TO_CHAR(0) THEN
+                       CASE WHEN P_Quote THEN '"' ELSE '' END ||
+                       REPLACE(REPLACE(REPLACE(P_Val, '"', '\"'), '''', ''), '\', '') ||
+                       CASE WHEN P_Quote THEN '"' ELSE '' END
+                   ELSE P_Alt
+               END;
+    END Ensure_Json_Element;
+
+    -- ========================================================================
+    -- Function 1: Check Person Status (Read-Only)
+    -- ========================================================================
+    FUNCTION Check_Person_Status(
+        O_Data OUT CLOB,
+        P_Data IN VARCHAR2
+    ) RETURN NUMBER IS
+        Xml_Data       XMLTYPE;
+        R_Row          Pf_Exchange_Person_Statuses%ROWTYPE;
+        V_Person_Id    NUMBER;
+        V_Step         VARCHAR2(400) := 'initial';
+        V_Value        VARCHAR2(4000);
+        V_Active       NUMBER := 0;
+        V_Close_Reason VARCHAR2(100);
+        V_Close_Date   DATE;
+        V_Close_Desc   VARCHAR2(100);
+
+        --------------------------------------------------------------------------------------------------------------------
+        FUNCTION Finish_Request(P_Result_Code IN NUMBER,
+                                P_Status IN NUMBER,
+                                P_Msg IN VARCHAR2,
+                                P_Data_Sqlerr IN CLOB := NULL)
+        RETURN NUMBER IS
+        BEGIN
+            R_Row.Person_Status_Id := Pf_Exchange_Person_Statuses_Seq.NEXTVAL;
+            R_Row.In_Data := P_Data;
+            R_Row.Result_Code := P_Result_Code;
+            R_Row.Status := P_Status;
+            R_Row.Msg := P_Msg;
+            R_Row.Data_Sqlerr := SUBSTR(P_Data_Sqlerr, 1, 4000);
+            R_Row.Creation_Date := SYSDATE;
+
+            O_Data := '{
+    "result": ' || Ensure_Json_Element(P_Result_Code) || ',
+    "msg": ' || Ensure_Json_Element(P_Msg) || ',
+    "ws_id": ' || Ensure_Json_Element(R_Row.Ws_Id) || ',
+    "status": ' || Ensure_Json_Element(P_Status, 'null') || '
+}';
+
+            INSERT INTO Pf_Exchange_Person_Statuses VALUES R_Row;
+            COMMIT;
+            RETURN CASE WHEN P_Result_Code = 0 THEN 0 ELSE 1 END;
+        EXCEPTION
+            WHEN OTHERS THEN
+                V_Value := SUBSTR(P_Msg || Core_Const.C_New_Line || SQLERRM || Core_Const.C_New_Line ||
+                                  DBMS_UTILITY.Format_Error_Backtrace(), 1, 3798);
+                O_Data := '{
+    "result": 0,
+    "msg": ' || Ensure_Json_Element(V_Value) || ',
+    "ws_id": ' || Ensure_Json_Element(R_Row.Ws_Id) || ',
+    "status": null
+}';
+                RETURN 0;
+        END Finish_Request;
+        --------------------------------------------------------------------------------------------------------------------
+    BEGIN
+        V_Step := 'request_body';
+        Xml_Data := XMLTYPE(Pf_Exchange_Online.Convert_To_Xml('Request', '<Request>' || P_Data || '</Request>'));
+
+        V_Step := 'retrieve_ws_id';
+        V_Value := Pf_Exchange_Online.Get_Xml_Param('Data/ws_id', Xml_Data);
+        IF V_Value IS NULL OR NOT REGEXP_LIKE(V_Value, '^\d+$') THEN
+            RETURN Finish_Request(0, NULL, 'Invalid ws_id - ' || NVL(V_Value, 'null'));
+        ELSE
+            R_Row.Ws_Id := V_Value;
+        END IF;
+
+        V_Step := 'retrieve_pinfl';
+        V_Value := Pf_Exchange_Online.Get_Xml_Param('Data/pinfl', Xml_Data);
+        IF V_Value IS NULL OR LENGTH(V_Value) != 14 OR NOT REGEXP_LIKE(V_Value, '^\d+$') THEN
+            RETURN Finish_Request(0, NULL, 'Invalid pinfl - ' || NVL(V_Value, 'null'));
+        ELSE
+            R_Row.Pinpp := V_Value;
+        END IF;
+
+        V_Step := 'look_for_person';
+        SELECT Person_Id,
+               CASE
+                   WHEN Close_Reason IS NULL AND Close_Date IS NULL AND Close_Desc IS NULL THEN 1
+                   ELSE 0
+               END,
+               Close_Reason,
+               Close_Date,
+               Close_Desc
+        INTO V_Person_Id, V_Active, V_Close_Reason, V_Close_Date, V_Close_Desc
+        FROM DUAL
+                 LEFT JOIN Pf_Persons ON Pinpp = R_Row.Pinpp
+            AND Person_Type = '01';
+
+        -- Case: Person not found
+        IF V_Person_Id IS NULL THEN
+            RETURN Finish_Request(0, NULL, 'Pensiya oluvchilar ro''yhatida mavjud emas');
+        END IF;
+
+        -- Case: Person found and active
+        IF V_Active = 1 THEN
+            RETURN Finish_Request(1, 1, '');
+        END IF;
+
+        -- Person is inactive - check WHY (close_desc)
+        V_Step := 'check_close_reason';
+
+        -- Case: Inactive because abroad (close_desc=11)
+        IF V_Close_Desc = '11' THEN
+            RETURN Finish_Request(1, 2, '');
+        END IF;
+
+        -- Case: Inactive for other reasons
+        RETURN Finish_Request(1, 3, '');
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN Finish_Request(0,
+                                  NULL,
+                                  'Ma''lumotni qayta ishlashda xatolik. [' || V_Step || ']',
+                                  SQLERRM || Core_Const.C_New_Line || DBMS_UTILITY.Format_Error_Backtrace());
+    END Check_Person_Status;
+
+    -- ========================================================================
+    -- Function 2: Restore Person Status (Check Arrival & Restore)
+    -- Now includes LEAVE registration creation
+    -- ========================================================================
+    FUNCTION Restore_Person_Status(
+        O_Data OUT CLOB,
+        P_Data IN VARCHAR2
+    ) RETURN NUMBER IS
+        Xml_Data                  XMLTYPE;
+        R_Row                     Pf_Exchange_Restore_Statuses%ROWTYPE;
+        V_Person_Id               NUMBER;
+        V_Step                    VARCHAR2(400) := 'initial';
+        V_Value                   VARCHAR2(4000);
+        V_Active                  NUMBER := 0;
+        V_Birth_Date              DATE;
+        V_Arrived                 NUMBER;
+        V_Restored                NUMBER;
+        V_Arrival_Msg             VARCHAR2(4000);
+        V_Restore_Msg             VARCHAR2(4000);
+        V_Restore_Reason          VARCHAR2(4000);
+        V_Close_Desc              VARCHAR2(100);
+
+        -- Registration variables
+        V_Registration_Id         NUMBER;
+        V_Sobes_Org_Id            Pf_Rb_Registration_Books.Sobes_Org_Id%Type;
+        R_Registration            Pf_Rb_Registration_Books%ROWTYPE;
+
+        --------------------------------------------------------------------------------------------------------------------
+        FUNCTION Finish_Request(P_Result_Code IN NUMBER,
+                                P_Msg IN VARCHAR2,
+                                P_Data_Sqlerr IN CLOB := NULL)
+        RETURN NUMBER IS
+        BEGIN
+            R_Row.Restore_Status_Id := Pf_Exchange_Restore_Statuses_Seq.NEXTVAL;
+            R_Row.In_Data := P_Data;
+            R_Row.Result_Code := P_Result_Code;
+            R_Row.Msg := P_Msg;
+            R_Row.Data_Sqlerr := SUBSTR(P_Data_Sqlerr, 1, 4000);
+            R_Row.Creation_Date := SYSDATE;
+
+            O_Data := '{
+    "result": ' || Ensure_Json_Element(P_Result_Code) || ',
+    "msg": ' || Ensure_Json_Element(P_Msg) || ',
+    "ws_id": ' || Ensure_Json_Element(R_Row.Ws_Id) || '
+}';
+
+            INSERT INTO Pf_Exchange_Restore_Statuses VALUES R_Row;
+            COMMIT;
+            RETURN CASE WHEN P_Result_Code = 0 THEN 0 ELSE 1 END;
+        EXCEPTION
+            WHEN OTHERS THEN
+                V_Value := SUBSTR(P_Msg || Core_Const.C_New_Line || SQLERRM || Core_Const.C_New_Line ||
+                                  DBMS_UTILITY.Format_Error_Backtrace(), 1, 3798);
+                O_Data := '{
+    "result": 0,
+    "msg": ' || Ensure_Json_Element(V_Value) || ',
+    "ws_id": ' || Ensure_Json_Element(R_Row.Ws_Id) || '
+}';
+                RETURN 0;
+        END Finish_Request;
+
+        --------------------------------------------------------------------------------------------------------------------
+        -- Create LEAVE registration when person returns from abroad
+        --------------------------------------------------------------------------------------------------------------------
+        PROCEDURE Create_Leave_Registration(
+            P_Person_Id IN NUMBER,
+            P_Pinfl IN VARCHAR2,
+            P_Sobes_Org_Id IN NUMBER
+        ) IS
+        BEGIN
+            -- Generate new registration ID
+            SELECT Pf_Rb_Registration_Books_Sq.NEXTVAL INTO V_Registration_Id FROM DUAL;
+
+            -- Build registration record
+            R_Registration.Registration_Id        := V_Registration_Id;
+            R_Registration.Registration_Type_Code := '07';  -- Reregistration/Recalculation type
+            R_Registration.Registration_Date      := SYSDATE;
+            R_Registration.Pinpp                  := P_Pinfl;
+            R_Registration.Person_Id              := P_Person_Id;
+            R_Registration.Sobes_Org_Id           := P_Sobes_Org_Id;
+            R_Registration.Status                 := '00';  -- Initial status
+            R_Registration.Inps                   := P_Pinfl;
+            R_Registration.Is_Closed              := 'N';
+            R_Registration.Application_Reason     := 'LEAVE';  -- Important: LEAVE reason for returning from abroad
+            R_Registration.Created_By             := NVL(Core_Env.Get_Env('USER_ID'), 1);
+            R_Registration.Creation_Date          := SYSDATE;
+            R_Registration.Last_Updated_By        := R_Registration.Created_By;
+            R_Registration.Last_Update_Date       := R_Registration.Creation_Date;
+            R_Registration.Change_Status_By       := R_Registration.Created_By;
+            R_Registration.Change_Status_Date     := R_Registration.Creation_Date;
+            R_Registration.Is_Guardian            := '0';
+
+            -- Insert registration record
+            INSERT INTO Pf_Rb_Registration_Books VALUES R_Registration;
+
+            -- Log the registration creation
+            DBMS_OUTPUT.PUT_LINE('LEAVE registration created: Registration_Id=' || V_Registration_Id ||
+                                 ', Person_Id=' || P_Person_Id || ', PINFL=' || P_Pinfl);
+
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Log error but don't fail the main operation
+                DBMS_OUTPUT.PUT_LINE('Error creating LEAVE registration: ' || SQLERRM);
+                -- Still throw error to rollback everything if registration fails
+                RAISE;
+        END Create_Leave_Registration;
+        --------------------------------------------------------------------------------------------------------------------
+    BEGIN
+        V_Step := 'request_body';
+        Xml_Data := XMLTYPE(Pf_Exchange_Online.Convert_To_Xml('Request', '<Request>' || P_Data || '</Request>'));
+
+        V_Step := 'retrieve_ws_id';
+        V_Value := Pf_Exchange_Online.Get_Xml_Param('Data/ws_id', Xml_Data);
+        IF V_Value IS NULL OR NOT REGEXP_LIKE(V_Value, '^\d+$') THEN
+            RETURN Finish_Request(0, 'Invalid ws_id - ' || NVL(V_Value, 'null'));
+        ELSE
+            R_Row.Ws_Id := V_Value;
+        END IF;
+
+        V_Step := 'retrieve_pinfl';
+        V_Value := Pf_Exchange_Online.Get_Xml_Param('Data/pinfl', Xml_Data);
+        IF V_Value IS NULL OR LENGTH(V_Value) != 14 OR NOT REGEXP_LIKE(V_Value, '^\d+$') THEN
+            RETURN Finish_Request(0, 'Invalid pinfl - ' || NVL(V_Value, 'null'));
+        ELSE
+            R_Row.Pinpp := V_Value;
+        END IF;
+
+        V_Step := 'look_for_person';
+        SELECT Person_Id,
+               Birth_Date,
+               CASE
+                   WHEN Close_Reason IS NULL AND Close_Date IS NULL AND Close_Desc IS NULL THEN 1
+                   ELSE 0
+               END,
+               Close_Desc
+        INTO V_Person_Id, V_Birth_Date, V_Active, V_Close_Desc
+        FROM DUAL
+                 LEFT JOIN Pf_Persons ON Pinpp = R_Row.Pinpp
+            AND Person_Type = '01';
+
+        -- Case 0: Person not found
+        IF V_Person_Id IS NULL THEN
+            RETURN Finish_Request(0, 'Pensiya oluvchilar ro''yhatida mavjud emas');
+        END IF;
+
+        -- Case 1: Person already active
+        IF V_Active = 1 THEN
+            RETURN Finish_Request(1, 'Pensiya oluvchilar ro''yhatida mavjud');
+        END IF;
+
+        -- Person is inactive - check if they can be restored
+        V_Step := 'check_citizen_arrival';
+
+        -- Call existing Citizen_Arrived function
+        V_Arrived := Pf_Person_Abroad.Citizen_Arrived(
+            o_Out_text   => V_Arrival_Msg,
+            p_person_id  => V_Person_Id,
+            p_pinpp      => R_Row.Pinpp,
+            p_birth_date => V_Birth_Date
+        );
+
+        IF V_Arrived = 1 THEN
+            -- Citizen has arrived - restore them
+            V_Step := 'restore_arrived_person';
+            V_Restore_Reason := 'Adliya vazirligi huzuridagi Personallashtirish markazi ma''lumotiga asosan qaytib kelgan';
+
+            -- Call existing Restore_Person_Arrived function
+            V_Restored := Restore_Person_Arrived(
+                o_Out_Text       => V_Restore_Msg,
+                p_Person_Id      => V_Person_Id,
+                p_Restore_Reason => V_Restore_Reason
+            );
+
+            IF V_Restored = 1 THEN
+                -- Successfully restored person record
+
+                -- Now create LEAVE registration if person was abroad (close_desc=11)
+                IF V_Close_Desc = '11' THEN
+                    V_Step := 'create_leave_registration';
+
+                    -- Get Sobes_Org_Id from person's address or use default
+                    BEGIN
+                        SELECT Sobes_Org_Id
+                        INTO V_Sobes_Org_Id
+                        FROM (
+                            SELECT Sobes_Org_Id
+                            FROM Pf_Person_Addresses
+                            WHERE Person_Id = V_Person_Id
+                            ORDER BY Date_End DESC
+                        )
+                        WHERE ROWNUM = 1;
+                    EXCEPTION
+                        WHEN NO_DATA_FOUND THEN
+                            V_Sobes_Org_Id := Core_Env.Get_Env('PF_ADMIN_ORG');
+                    END;
+
+                    -- Create LEAVE registration
+                    Create_Leave_Registration(
+                        P_Person_Id    => V_Person_Id,
+                        P_Pinfl        => R_Row.Pinpp,
+                        P_Sobes_Org_Id => V_Sobes_Org_Id
+                    );
+                END IF;
+
+                -- Case 2: Successfully restored
+                RETURN Finish_Request(2, 'Oluvchi statusi faol xolatga keltirildi');
+            END IF;
+        END IF;
+
+        -- Case 3: Citizen has NOT arrived or restoration failed
+        RETURN Finish_Request(3, 'O''zbekiston Respublikasi hududiga kirganlik holati aniqlanmadi');
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            RETURN Finish_Request(CASE
+                                      WHEN V_Person_Id IS NULL THEN 0
+                                      WHEN V_Active = 1 THEN 1
+                                      ELSE 3
+                                  END,
+                                  'Ma''lumotni qayta ishlashda xatolik. [' || V_Step || ']',
+                                  SQLERRM || Core_Const.C_New_Line || DBMS_UTILITY.Format_Error_Backtrace());
+    END Restore_Person_Status;
+
+END PF_EXCHANGES_ABROAD;
+/

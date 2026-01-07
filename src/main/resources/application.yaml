@@ -67,3 +67,10 @@ logging:
 jwt:
   secretKey: 5A7134743777397A24432646294A404635266556A5863272357538782F4125
   expireHours: 24
+
+# MIB Pension Integration
+mib:
+  pension:
+    cancel-inventory:
+      url: https://pension.mib.uz/cancel-inventory
+      auth: Basic cGVuc2lvbjpxcFtYJDM5JG5bdS5yZS40

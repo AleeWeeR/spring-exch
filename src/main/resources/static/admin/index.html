@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Admin Panel</title>
+        <link rel="stylesheet" href="/admin/css/admin.css" />
+    </head>
+    <body>
+        <div id="loading">
+            <div class="loading-spinner"></div>
+            <p>Tekshirilmoqda...</p>
+        </div>
+
+        <div id="app" style="display: none">
+            <div class="header">
+                <div class="header-left">
+                    <h1>Foydalanuvchilarni boshqarish</h1>
+                </div>
+                <div class="header-right">
+                    <div
+                        class="uptime-indicator"
+                        id="uptimeIndicator"
+                        title="Server uptime"
+                    >
+                        <div class="uptime-dot"></div>
+                        <div class="uptime-info">
+                            <span class="uptime-value" id="uptimeValue"
+                                >...</span
+                            >
+                            <span class="uptime-start" id="uptimeStart"
+                                >...</span
+                            >
+                        </div>
+                    </div>
+                    <a href="/admin/logs.html" class="btn-nav">
+                        <img
+                            src="/img/logs.png"
+                            alt="Logs"
+                            class="btn-icon-img"
+                        />
+                        Loglar
+                    </a>
+                    <button onclick="logout()" class="btn-logout">
+                        <img
+                            src="/img/logout.png"
+                            alt="Logout"
+                            class="btn-icon-img"
+                        />
+                    </button>
+                </div>
+            </div>
+
+            <div class="container">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2>Foydalanuvchilar</h2>
+                        <div class="panel-actions">
+                            <div class="search-box">
+                                <img
+                                    src="/img/search.png"
+                                    alt="Search"
+                                    class="search-icon"
+                                />
+                                <input
+                                    type="text"
+                                    id="searchInput"
+                                    placeholder="Qidirish..."
+                                    oninput="filterUsers()"
+                                />
+                            </div>
+                            <button
+                                onclick="loadUsers()"
+                                class="btn-secondary"
+                                id="refreshBtn"
+                            >
+                                <img
+                                    src="/img/refresh.png"
+                                    alt="Refresh"
+                                    class="btn-icon-img"
+                                    id="refreshIcon"
+                                />
+                            </button>
+                            <button
+                                onclick="openCreateModal()"
+                                class="btn-primary"
+                            >
+                                <img
+                                    src="/img/add.png"
+                                    alt="Add"
+                                    class="btn-icon-img"
+                                />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-container user-list-scroll-container">
+                        <table id="usersTable">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Login</th>
+                                    <th>Ism</th>
+                                    <th>Qo'shimcha</th>
+                                    <th>Amallar</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usersBody">
+                                <tr>
+                                    <td colspan="5" class="loading-cell">
+                                        <div class="loading-spinner"></div>
+                                        <span>Yuklanmoqda...</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Create Modal -->
+            <div id="createModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Yangi foydalanuvchi</h2>
+                        <span class="close" onclick="closeCreateModal()"
+                            >&times;</span
+                        >
+                    </div>
+                    <form id="createUserForm">
+                        <input
+                            type="text"
+                            id="newUsername"
+                            placeholder="Login"
+                            required
+                            autocomplete="off"
+                        />
+                        <input
+                            type="text"
+                            id="newName"
+                            placeholder="Ism"
+                            required
+                        />
+
+                        <div class="password-field">
+                            <input
+                                type="password"
+                                id="newPassword"
+                                placeholder="Parol"
+                                required
+                            />
+                            <button
+                                type="button"
+                                class="toggle-password"
+                                onclick="
+                                    togglePasswordWithImage('newPassword', this)
+                                "
+                            >
+                                <img
+                                    src="/img/eye-open.png"
+                                    alt=""
+                                    class="icon-eye"
+                                />
+                            </button>
+                        </div>
+
+                        <div class="password-field">
+                            <input
+                                type="password"
+                                id="confirmPassword"
+                                placeholder="Parolni tasdiqlang"
+                                required
+                            />
+                            <button
+                                type="button"
+                                class="toggle-password"
+                                onclick="
+                                    togglePasswordWithImage(
+                                        'confirmPassword',
+                                        this,
+                                    )
+                                "
+                            >
+                                <img
+                                    src="/img/eye-open.png"
+                                    alt=""
+                                    class="icon-eye"
+                                />
+                            </button>
+                        </div>
+
+                        <textarea
+                            id="addInfo"
+                            placeholder="Qo'shimcha ma'lumot"
+                            rows="3"
+                        ></textarea>
+
+                        <div class="modal-actions">
+                            <button
+                                type="button"
+                                onclick="closeCreateModal()"
+                                class="btn-secondary"
+                            >
+                                Bekor qilish
+                            </button>
+                            <button
+                                type="submit"
+                                class="btn-primary"
+                                id="createBtn"
+                            >
+                                Yaratish
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Edit User Modal -->
+            <div id="editModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Foydalanuvchini tahrirlash</h2>
+                        <span class="close" onclick="closeEditModal()"
+                            >&times;</span
+                        >
+                    </div>
+                    <form id="editUserForm">
+                        <input type="hidden" id="editUserId" />
+                        <input
+                            type="text"
+                            id="editUsername"
+                            placeholder="Login"
+                            required
+                        />
+                        <input
+                            type="text"
+                            id="editName"
+                            placeholder="Ism"
+                            required
+                        />
+                        <textarea
+                            id="editAddInfo"
+                            placeholder="Qo'shimcha ma'lumot"
+                            rows="3"
+                        ></textarea>
+
+                        <div class="modal-actions">
+                            <button
+                                type="button"
+                                onclick="closeEditModal()"
+                                class="btn-secondary"
+                            >
+                                Bekor qilish
+                            </button>
+                            <button
+                                type="submit"
+                                class="btn-primary"
+                                id="saveBtn"
+                            >
+                                Saqlash
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div id="permissionsModal" class="modal">
+                <div class="modal-content modal-large">
+                    <div class="modal-header">
+                        <h2>Huquqlar</h2>
+                        <span class="close" onclick="closePermissionsModal()"
+                            >&times;</span
+                        >
+                    </div>
+                    <div class="permissions-user-info">
+                        <div>
+                            <strong id="permissionsUsername"></strong>
+                        </div>
+                        <div class="permissions-controls">
+                            <button
+                                type="button"
+                                onclick="expandAllCategories()"
+                                class="btn-expand-collapse"
+                                title="Barchasini ochish"
+                            >
+                                <img
+                                    src="/img/expand.png"
+                                    alt="Expand"
+                                    class="btn-icon-img"
+                                />
+                            </button>
+                            <button
+                                type="button"
+                                onclick="collapseAllCategories()"
+                                class="btn-expand-collapse"
+                                title="Barchasini yopish"
+                            >
+                                <img
+                                    src="/img/collapse.png"
+                                    alt="Collapse"
+                                    class="btn-icon-img"
+                                />
+                            </button>
+                            <button
+                                type="button"
+                                onclick="toggleEditMode()"
+                                class="btn-edit-toggle"
+                                id="editToggleBtn"
+                            >
+                                <img
+                                    src="/img/edit.png"
+                                    alt="Edit"
+                                    class="btn-icon-img"
+                                />
+                            </button>
+                        </div>
+                    </div>
+                    <div id="permissionsList" class="permissions-editor">
+                        <!-- Dynamic content -->
+                    </div>
+                    <div class="modal-actions" id="permissionsActions">
+                        <button
+                            type="button"
+                            onclick="closePermissionsModal()"
+                            class="btn-secondary"
+                        >
+                            Yopish
+                        </button>
+                        <button
+                            type="button"
+                            onclick="saveUserPermissions()"
+                            class="btn-primary"
+                            id="savePermissionsBtn"
+                            style="display: none"
+                        >
+                            Saqlash
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            (async function checkAuth() {
+                const token = localStorage.getItem("jwt_token");
+                const username = localStorage.getItem("username");
+                if (!token) {
+                    window.location.href = "/login.html";
+                    return;
+                }
+
+                try {
+                    const response = await fetch("/api/v1/admin/users", {
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            Accept: "application/json",
+                        },
+                    });
+
+                    if (response.ok) {
+                        document.getElementById("loading").style.display =
+                            "none";
+                        document.getElementById("app").style.display = "block";
+
+                        // Load saved theme
+                        const savedTheme =
+                            localStorage.getItem("theme") || "light";
+                        document.body.setAttribute("data-theme", savedTheme);
+
+                        loadUsers();
+                    } else {
+                        localStorage.removeItem("jwt_token");
+                        localStorage.removeItem("username");
+                        window.location.href = "/login.html";
+                    }
+                } catch (error) {
+                    console.error("Auth check failed:", error);
+                    localStorage.removeItem("jwt_token");
+                    localStorage.removeItem("username");
+                    window.location.href = "/login.html";
+                }
+            })();
+        </script>
+        <script src="/admin/js/admin.js"></script>
+        <script src="/admin/js/uptime.js"></script>
+    </body>
+</html>

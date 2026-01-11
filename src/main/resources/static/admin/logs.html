@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>API Logs - Admin Panel</title>
+        <link rel="stylesheet" href="/admin/css/admin.css" />
+        <link rel="stylesheet" href="/admin/css/logs.css" />
+    </head>
+    <body>
+        <div id="loading">
+            <div class="loading-spinner"></div>
+            <p>Tekshirilmoqda...</p>
+        </div>
+
+        <div id="app" style="display: none">
+            <div class="header">
+                <div class="header-left">
+                    <h1>API Logs</h1>
+                </div>
+                <div class="header-right">
+                    <div
+                        class="uptime-indicator"
+                        id="uptimeIndicator"
+                        title="Server uptime"
+                    >
+                        <div class="uptime-dot"></div>
+                        <div class="uptime-info">
+                            <span class="uptime-value" id="uptimeValue"
+                                >...</span
+                            >
+                            <span class="uptime-start" id="uptimeStart"
+                                >...</span
+                            >
+                        </div>
+                    </div>
+                    <a href="/admin/index.html" class="btn-nav">
+                        <img
+                            src="/img/users.png"
+                            alt="Users"
+                            class="btn-icon-img"
+                        />
+                        Foydalanuvchilar
+                    </a>
+                    <button onclick="logout()" class="btn-logout">
+                        <img
+                            src="/img/logout.png"
+                            alt="Logout"
+                            class="btn-icon-img"
+                        />
+                    </button>
+                </div>
+            </div>
+
+            <div class="container-wide">
+                <!-- Stats Cards -->
+                <div class="stats-row" id="statsRow">
+                    <div class="stat-card">
+                        <div class="stat-value" id="statTotal">-</div>
+                        <div class="stat-label">Jami so'rovlar (24s)</div>
+                    </div>
+                    <div class="stat-card stat-error">
+                        <div class="stat-value" id="statErrors">-</div>
+                        <div class="stat-label">Xatolar</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statAvgDuration">-</div>
+                        <div class="stat-label">O'rtacha vaqt (ms)</div>
+                    </div>
+                </div>
+
+                <div class="panel-header">
+                    <h2>Loglar</h2>
+
+                    <div class="panel-actions">
+                        <div class="log-type-toggle">
+                            <button
+                                id="btnProjectLogs"
+                                class="log-type-btn active"
+                                onclick="setLogSource('project')"
+                            >
+                                Project
+                            </button>
+
+                            <button
+                                id="btnSystemLogs"
+                                class="log-type-btn"
+                                onclick="setLogSource('system')"
+                            >
+                                System
+                            </button>
+                        </div>
+
+                        <button
+                            onclick="reloadCurrentLogs()"
+                            class="btn-secondary"
+                            id="refreshLogsBtn"
+                        >
+                            <img
+                                src="/img/refresh.png"
+                                alt="Refresh"
+                                class="btn-icon-img"
+                            />
+                        </button>
+                    </div>
+                </div>
+                <div id="projectLogsSection">
+                    <!-- Filters -->
+                    <div class="panel filters-panel">
+                        <div class="filters-grid">
+                            <div class="filter-group">
+                                <label>Correlation ID</label>
+                                <input
+                                    type="text"
+                                    id="filterCorrelationId"
+                                    placeholder="UUID..."
+                                />
+                            </div>
+                            <div class="filter-group">
+                                <label>Yo'nalish</label>
+                                <select id="filterDirection">
+                                    <option value="">Barchasi</option>
+                                    <option value="IN">IN (Kiruvchi)</option>
+                                    <option value="OUT">OUT (Chiquvchi)</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Endpoint</label>
+                                <input
+                                    type="text"
+                                    id="filterEndpoint"
+                                    placeholder="/api/..."
+                                />
+                            </div>
+                            <div class="filter-group">
+                                <label>HTTP Status</label>
+                                <select id="filterStatus">
+                                    <option value="">Barchasi</option>
+                                    <optgroup label="Success">
+                                        <option value="200">200 OK</option>
+                                        <option value="201">201 Created</option>
+                                    </optgroup>
+                                    <optgroup label="Client Error">
+                                        <option value="400">
+                                            400 Bad Request
+                                        </option>
+                                        <option value="401">
+                                            401 Unauthorized
+                                        </option>
+                                        <option value="403">
+                                            403 Forbidden
+                                        </option>
+                                        <option value="404">
+                                            404 Not Found
+                                        </option>
+                                    </optgroup>
+                                    <optgroup label="Server Error">
+                                        <option value="500">
+                                            500 Internal Server Error
+                                        </option>
+                                        <option value="502">
+                                            502 Bad Gateway
+                                        </option>
+                                        <option value="503">
+                                            503 Service Unavailable
+                                        </option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Tashqi tizimlar (kiritilsin)</label>
+                                <input
+                                    type="text"
+                                    id="filterExternalSystems"
+                                    placeholder="Tizim nomlari..."
+                                />
+                            </div>
+                            <div class="filter-group">
+                                <label>Tashqi tizimlar (kiritilmasin)</label>
+                                <input
+                                    type="text"
+                                    id="filterExternalSystemsExclude"
+                                    placeholder="Tizim nomlari..."
+                                    value="admin,auth"
+                                />
+                            </div>
+                            <div class="filter-group">
+                                <label>Boshlanish</label>
+                                <input
+                                    type="datetime-local"
+                                    id="filterStartDate"
+                                    step="1"
+                                />
+                            </div>
+                            <div class="filter-group">
+                                <label>Tugash</label>
+                                <input
+                                    type="datetime-local"
+                                    id="filterEndDate"
+                                    step="1"
+                                />
+                            </div>
+                        </div>
+                        <div class="filters-actions">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="filterErrorsOnly" />
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label"
+                                    >Faqat xatolar (4xx, 5xx)</span
+                                >
+                            </label>
+                            <button
+                                onclick="resetFilters()"
+                                class="btn-secondary"
+                            >
+                                <img
+                                    src="/img/refresh.png"
+                                    alt="Reset"
+                                    class="btn-icon-img"
+                                />
+                                Tozalash
+                            </button>
+                            <button onclick="loadLogs()" class="btn-primary">
+                                <img
+                                    src="/img/search.png"
+                                    alt="Search"
+                                    class="btn-icon-img"
+                                />
+                                Qidirish
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Logs Table -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h2>Loglar</h2>
+                            <div class="panel-actions">
+                                <div class="result-badge" id="resultCount">
+                                    <span class="result-badge-label"
+                                        >Jami:</span
+                                    >
+                                    <span
+                                        class="result-badge-value"
+                                        id="resultValue"
+                                        >0</span
+                                    >
+                                </div>
+                                <button
+                                    onclick="loadLogs()"
+                                    class="btn-secondary"
+                                    id="refreshLogsBtn"
+                                >
+                                    <img
+                                        src="/img/refresh.png"
+                                        alt="Refresh"
+                                        class="btn-icon-img"
+                                    />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-container logs-table-container">
+                            <table id="logsTable">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 140px">Vaqt</th>
+                                        <th style="width: 50px">Yo'n.</th>
+                                        <th style="width: 70px">Method</th>
+                                        <th>Endpoint</th>
+                                        <th style="width: 70px">Status</th>
+                                        <th style="width: 80px">Vaqt (ms)</th>
+                                        <th style="width: 120px">
+                                            Tashqi tizim
+                                        </th>
+                                        <th style="width: 80px">Amallar</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="logsBody">
+                                    <tr>
+                                        <td colspan="8" class="loading-cell">
+                                            <div class="loading-spinner"></div>
+                                            <span>Yuklanmoqda...</span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div class="pagination" id="pagination"></div>
+                    </div>
+                </div>
+                <div id="systemLogsSection" style="display: none">
+                    <!-- System Logs Filters -->
+                    <div class="panel filters-panel">
+                        <div class="filters-grid">
+                            <div class="filter-group">
+                                <label>Fayl</label>
+                                <select id="systemLogFileSelect"></select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Satrlar soni</label>
+                                <input
+                                    type="number"
+                                    id="systemLogLines"
+                                    value="200"
+                                    min="50"
+                                    max="5000"
+                                    title="Lines"
+                                />
+                            </div>
+                            <div class="filter-group">
+                                <label>Boshlanish sanasi</label>
+                                <input
+                                    type="datetime-local"
+                                    id="systemLogStartDate"
+                                />
+                            </div>
+                            <div class="filter-group">
+                                <label>Tugash sanasi</label>
+                                <input
+                                    type="datetime-local"
+                                    id="systemLogEndDate"
+                                />
+                            </div>
+                            <div class="filter-group" style="grid-column: 1 / -1;">
+                                <label>Qidiruv (so'z yoki matn)</label>
+                                <input
+                                    type="text"
+                                    id="systemLogSearchText"
+                                    placeholder="Qidirilayotgan so'z yoki matn..."
+                                />
+                            </div>
+                        </div>
+                        <div class="filter-actions">
+                            <button
+                                class="btn-primary"
+                                onclick="loadSystemLogs()"
+                            >
+                                <img
+                                    src="/img/search.png"
+                                    alt="Search"
+                                    class="btn-icon-img"
+                                />
+                                Qidirish
+                            </button>
+                            <button
+                                class="btn-secondary"
+                                onclick="resetSystemLogFilters()"
+                            >
+                                Tozalash
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h2>System Logs</h2>
+
+                            <div class="panel-actions">
+                                <div class="result-badge" id="systemLogResultCount">
+                                    <span class="result-badge-label">Topildi:</span>
+                                    <span class="result-badge-value" id="systemLogResultValue">0</span>
+                                </div>
+                                <button
+                                    class="btn-secondary"
+                                    onclick="downloadSystemLog()"
+                                >
+                                    Yuklab olish
+                                </button>
+                            </div>
+                        </div>
+
+                        <pre id="systemLogViewer" class="system-log-viewer">
+                Yuklanmoqda...
+                        </pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Log Detail Modal -->
+            <div id="logDetailModal" class="modal">
+                <div class="modal-content modal-large">
+                    <div class="modal-header">
+                        <h2>Log tafsilotlari</h2>
+                        <span class="close" onclick="closeLogDetailModal()"
+                            >&times;</span
+                        >
+                    </div>
+                    <div id="logDetailContent" class="log-detail-content">
+                        <!-- Dynamic content -->
+                    </div>
+                    <div class="modal-actions">
+                        <button
+                            onclick="closeLogDetailModal()"
+                            class="btn-secondary"
+                        >
+                            Yopish
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            (async function checkAuth() {
+                const token = localStorage.getItem("jwt_token");
+                const username = localStorage.getItem("username");
+                if (!token) {
+                    window.location.href = "/login.html";
+                    return;
+                }
+
+                try {
+                    const response = await fetch("/api/v1/admin/users", {
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            Accept: "application/json",
+                        },
+                    });
+
+                    if (response.ok) {
+                        document.getElementById("loading").style.display =
+                            "none";
+                        document.getElementById("app").style.display = "block";
+
+                        const savedTheme =
+                            localStorage.getItem("theme") || "light";
+                        document.body.setAttribute("data-theme", savedTheme);
+
+                        loadStats();
+                        loadLogs();
+                    } else {
+                        localStorage.removeItem("jwt_token");
+                        localStorage.removeItem("username");
+                        window.location.href = "/login.html";
+                    }
+                } catch (error) {
+                    console.error("Auth check failed:", error);
+                    window.location.href = "/login.html";
+                }
+            })();
+        </script>
+        <script src="/admin/js/logs.js"></script>
+        <script src="/admin/js/uptime.js"></script>
+    </body>
+</html>

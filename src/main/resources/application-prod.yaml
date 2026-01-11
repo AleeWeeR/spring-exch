@@ -1,0 +1,68 @@
+logging:
+  level:
+    root: info
+    org.springframework:
+      web: info
+    io: info
+    uz.fido.pfexchange: info
+
+app:
+  exchange:
+  serialization:
+    default: camel
+    strategies:
+      snake:
+        username:
+          - pension_gov
+          - pension_fund_db
+
+  logging:
+    enabled: true
+    log-request-body: true
+    log-response-body: true
+    loh-headers: false
+    max-body-length: 4000
+    exclude-endpoints:
+      - /favicon.ico
+      - /login.html
+      - /css/*
+      - /js/*
+      - /img/*
+      - /admin/css/*
+      - /admin/js/*
+      - /admin/logs.html
+      - /admin/index.html
+      - /actuator/**
+      - /swagger/**
+      - /v3/api-docs/**
+      - /api/v1/pf/minyust/family/batch/**
+      - /api/v1/admin/logs/**
+      - /api/v1/admin/actuator/metrics/process.uptime
+    async: false
+
+  jwt:
+    secretKey: ${JWT_SECRET_KEY}
+    expireHours: 1
+    asymmetric:
+      enabled: ${JWT_ASYMMETRIC_ENABLED:false}
+      system-name: pensiya-dm
+      key-id: pfexchange-2026
+      expire-minutes: 60
+      private-key-base64: ${JWT_ASYMMETRIC_PRIVATE_KEY_BASE64:}
+      public-key-base64: ${JWT_ASYMMETRIC_PUBLIC_KEY_BASE64:}
+
+  minyust:
+    batch:
+      scheduled-enabled: false
+      batch-size: 500
+      thread-pool-size: 10
+      rate-limit-per-second: 20
+      schedule-interval-ms: 120000 # 2 minutes
+      batch-timeout-minutes: 15
+      stuck-record-threshold-minutes: 10
+      recovery-interval-ms: 300000 # 5 minutes
+      max-retries: 3
+      circuit-breaker:
+        failure-threshold: 5
+        open-duration-ms: 120000 # 2 minutes
+        half-open-success-threshold: 5

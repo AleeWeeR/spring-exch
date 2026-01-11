@@ -1,22 +1,102 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Configuration status="WARN">
+<?xml version="1.0" encoding="UTF-8" ?>
+<Configuration status="WARN" monitorInterval="30">
+
+    <Properties>
+        <Property name="LOG_PATH">${env:LOG_PATH:-/var/log/app}</Property>
+        <Property name="LOG_FILE">${env:LOG_FILE:-pfexchange}</Property>
+        <Property
+      name="FILE_PATTERN"
+    >%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{endpoint}] [%X{requestId}] %-5level %logger{36} - %msg%n</Property>
+        <Property
+      name="CONSOLE_PATTERN"
+    >%d{HH:mm:ss.SSS} %highlight{%-5level} [%X{endpoint}] %style{%logger{36}}{cyan} - %msg%n</Property>
+    </Properties>
+
     <Appenders>
         <Console name="Console" target="SYSTEM_OUT">
-            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+            <PatternLayout pattern="${CONSOLE_PATTERN}" disableAnsi="false" />
         </Console>
+
+        <RollingFile
+      name="ApplicationFile"
+      fileName="${LOG_PATH}/${LOG_FILE}.log"
+      filePattern="${LOG_PATH}/archive/${LOG_FILE}-%d{yyyy-MM-dd}-%i.log.gz"
+      immediateFlush="false"
+    >
+            <PatternLayout pattern="${FILE_PATTERN}" />
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true" />
+                <SizeBasedTriggeringPolicy size="100MB" />
+            </Policies>
+            <DefaultRolloverStrategy max="30" fileIndex="min">
+                <Delete basePath="${LOG_PATH}/archive" maxDepth="1">
+                    <IfFileName glob="${LOG_FILE}-*.log.gz" />
+                    <IfLastModified age="30d" />
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingFile>
+
+        <RollingFile
+      name="ErrorFile"
+      fileName="${LOG_PATH}/${LOG_FILE}-error.log"
+      filePattern="${LOG_PATH}/archive/${LOG_FILE}-error-%d{yyyy-MM-dd}.log.gz"
+      immediateFlush="true"
+    >
+            <PatternLayout pattern="${FILE_PATTERN}" />
+            <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY" />
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true" />
+                <SizeBasedTriggeringPolicy size="50MB" />
+            </Policies>
+            <DefaultRolloverStrategy max="90">
+                <Delete basePath="${LOG_PATH}/archive" maxDepth="1">
+                    <IfFileName glob="${LOG_FILE}-error-*.log.gz" />
+                    <IfLastModified age="90d" />
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingFile>
+
+        <Async name="AsyncConsole" bufferSize="512">
+            <AppenderRef ref="Console" />
+        </Async>
+
+        <Async name="AsyncFile" bufferSize="512" includeLocation="false">
+            <AppenderRef ref="ApplicationFile" />
+        </Async>
+
+        <Async name="AsyncError" bufferSize="256" includeLocation="true">
+            <AppenderRef ref="ErrorFile" />
+        </Async>
+
     </Appenders>
 
     <Loggers>
         <Logger name="uz.fido.pfexchange" level="debug" additivity="false">
-            <AppenderRef ref="Console"/>
+            <AppenderRef ref="AsyncConsole" />
+            <AppenderRef ref="AsyncFile" />
+            <AppenderRef ref="AsyncError" />
         </Logger>
 
         <Logger name="org.springframework" level="info" additivity="false">
-            <AppenderRef ref="Console"/>
+            <AppenderRef ref="AsyncConsole" />
+            <AppenderRef ref="AsyncFile" />
         </Logger>
 
+        <Logger name="org.springframework.boot" level="info" additivity="false">
+            <AppenderRef ref="AsyncConsole" />
+            <AppenderRef ref="AsyncFile" />
+        </Logger>
+
+        <Logger name="org.apache" level="warn" />
+        <Logger name="com.zaxxer.hikari" level="warn" />
+        <Logger name="io.netty" level="warn" />
+
         <Root level="info">
-            <AppenderRef ref="Console"/>
+            <AppenderRef ref="AsyncConsole" />
+            <AppenderRef ref="AsyncFile" />
+            <AppenderRef ref="AsyncError" />
         </Root>
+
     </Loggers>
+
 </Configuration>

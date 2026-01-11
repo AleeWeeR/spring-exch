@@ -56,7 +56,7 @@ deploy:
       echo "$HARBOR_PASSWORD" | docker login -u "$HARBOR_USERNAME" --password-stdin "$HARBOR_HOST"
       docker rm -f $CI_PROJECT_NAME-$CI_COMMIT_BRANCH || true
       docker pull $IMAGE
-      docker run -d --name $CI_PROJECT_NAME-$CI_COMMIT_BRANCH -e DB_URL=jdbc:oracle:thin:@10.50.50.144:1525:pfntest -e DB_USERNAME=core -e DB_PASSWORD=coretest -p $DEPLOY_PORT:$APP_PORT --restart=unless-stopped "$IMAGE"
+      docker run -d --name $CI_PROJECT_NAME-$CI_COMMIT_BRANCH -e DB_URL=jdbc:oracle:thin:@10.50.50.144:1525:pfntest -e DB_USERNAME=core -e DB_PASSWORD=coretest -e SPRING_PROFILES_ACTIVE=dev -e JWT_SECRET_KEY=g7RB/gtuLFJNcW/1gs0BGc1ob7y0JVfWzjF4yAgE5r2p8nJf+RQF84u+PX9VivBOk+rgTGTDB62UXP+waIhllw== -p $DEPLOY_PORT:$APP_PORT --restart=unless-stopped "$IMAGE"
       docker logout "$HARBOR_HOST" || true
       EOF
   

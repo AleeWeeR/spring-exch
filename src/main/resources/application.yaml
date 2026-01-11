@@ -1,4 +1,8 @@
 spring:
+  profiles:
+    active: dev
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: pf-exchange
   main:
@@ -6,6 +10,11 @@ spring:
   output:
     ansi:
       enabled: always
+  messages:
+    basename: i18n/messages, i18n/ValidationMessages
+    default-locale: uz
+    encoding: UTF-8
+    fallback-to-system-locale: false
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
@@ -24,7 +33,7 @@ spring:
         cachePrepStmts: true
         prepStmtCacheSize: 100
         prepStmtCacheSqlLimit: 1024
-      leak-detection-threshold: 1000
+      leak-detection-threshold: 2000
       connection-init-sql: >
         BEGIN
           EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TERRITORY=''CIS''';
@@ -43,7 +52,13 @@ spring:
   jpa:
     hibernate:
       ddl-auto: none
-# Server
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+    open-in-view: true
+
 server:
   port: 8080
   compression:
@@ -55,15 +70,17 @@ server:
       cookie:
         max-age: 24h
 
-# Logging
-logging:
-  level:
-    root: info
-    org.springframework:
-      web: info
-    io: info
-    uz.fido.pfexchange: debug # ????? ??????????? ???????
-
-jwt:
-  secretKey: 5A7134743777397A24432646294A404635266556A5863272357538782F4125
-  expireHours: 24
+management:
+  endpoints:
+    web:
+      base-path: /api/v1/admin/actuator
+      exposure:
+        include: info, health, metrics, startup
+  endpoint:
+    startup:
+      enabled: true
+  info:
+    java:
+      enabled: true
+    os:
+      enabled: true

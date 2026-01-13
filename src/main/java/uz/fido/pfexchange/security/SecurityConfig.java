@@ -26,7 +26,8 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers( "/api/*/auth/**").permitAll()
+                        .requestMatchers("/api/*/auth/**").permitAll()
+                        .requestMatchers("/pf/mib/**").permitAll()  // Allow PL/SQL to call MIB proxy endpoints
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

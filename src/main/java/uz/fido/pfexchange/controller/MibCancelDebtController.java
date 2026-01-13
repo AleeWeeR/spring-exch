@@ -22,6 +22,9 @@ import uz.fido.pfexchange.service.MibCancelDebtService;
  *
  * The PL/SQL function calls this endpoint which then forwards the request to MIB.
  * All business logic is handled in the PL/SQL function.
+ *
+ * SECURITY: This endpoint is whitelisted in SecurityConfig (no JWT required)
+ * because it's called internally by PL/SQL functions.
  */
 @Slf4j
 @RestController
@@ -57,7 +60,8 @@ public class MibCancelDebtController {
     @Operation(
         summary = "MIB pension API ga qarzdorlikni bekor qilish so'rovini yuborish",
         description = "Bu endpoint JSP sendMibCancel.jsp ni almashtiradi. " +
-            "PL/SQL funksiyasi bu endpointni chaqiradi va u MIB ga so'rovni yo'naltiradi."
+            "PL/SQL funksiyasi bu endpointni chaqiradi va u MIB ga so'rovni yo'naltiradi. " +
+            "ESLATMA: Bu endpoint JWT autentifikatsiyasiz (public) - faqat ichki PL/SQL chaqiruvlari uchun."
     )
     @ApiResponses(value = {
         @ApiResponse(
